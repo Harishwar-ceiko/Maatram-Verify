@@ -1,0 +1,107 @@
+# ---------------------------------------------------------------------------
+# Single source of truth for every threshold and rule in the pipeline.
+# Nothing in the code hard-codes a numeric limit: services read this file.
+# ---------------------------------------------------------------------------
+
+app:
+  name: Maatram Verify
+  programme: Maatram HackForge 2026-27
+  problem: MH26-01
+  timezone: Asia/Kolkata
+
+uploads:
+  max_mb: 15
+  allowed_extensions: [pdf, jpg, jpeg, png]
+  # Magic bytes are the authority, extensions only route the parser.
+  magic:
+    pdf: ["25504446"]          # %PDF
+    jpeg: ["FFD8FF"]
+    png: ["89504E470D0A1A0A"]
+  max_pages: 12
+  min_bytes: 1024
+
+ocr:
+  engine: tesseract            # tesseract | paddle
+  language: eng
+  render_dpi: 300
+  upscale_below_dpi: 180
+  upscale_factor: 1.6
+  deskew_max_degrees: 12
+  denoise_strength: 7
+  adaptive_block: 31
+  adaptive_c: 11
+  page_segmentation_modes: [6, 4, 11]
+  min_word_confidence: 45
+  low_confidence: 62           # a field below this goes to manual review
+
+subjects:
+  # Canonical subjects a complete mark sheet must carry.
+  required:
+    - Mathematics
+    - English
+    - Physics
+    - Chemistry
+  # Alias map for normalisation. Matching is case/punctuation-insensitive and
+  # also consults rapidfuzz for anything the map misses.
+  aliases:
+    Mathematics: [maths, math, mathematics i, mathematics 1, mat, maths i]
+    English: [eng, english i, english 1, english language]
+    Physics: [phy, physics i, physics 1]
+    Chemistry: [chem, chemistry i, chemistry 1]
+    Computer Science: [cs, comp sci, computer applications, computer science i]
+    Biology: [bio, botany, zoology, biological science]
+    Accountancy: [accounts, accountancy i, acc]
+    Economics: [eco, economics i]
+    Business Studies: [bst, business studies i]
+    History: [hist, history i]
+    Geography: [geo, geography i]
+    Tamil: [tam, tamil i]
+  fuzzy_threshold: 82          # rapidfuzz WRatio, 0-100
+  mark_tolerance: 0            # exact integer marks unless a rule overrides
+
+validation:
+  name_fuzzy_threshold: 86
+  register_number_min_confidence: 55
+  duplicate_phash_distance: 8  # =< this counts as a near duplicate
+  overall:
+    flag_mark_mismatch: true
+    flag_photo_fail: true
+    flag_missing_data: true
+    flag_identity_conflict: true
+
+photo:
+  min_width: 300
+  max_width: 6000
+  min_height: 400
+  max_height: 8000
+  min_aspect_ratio: 0.66       # width / height, portrait
+  max_aspect_ratio: 0.82
+  min_size_kb: 10
+  max_size_kb: 8192
+  allowed_formats: [JPEG, PNG]
+  orientation: portrait
+  min_brightness: 55           # mean luminance 0-255
+  max_brightness: 215
+  min_sharpness: 60            # variance of Laplacian
+  max_blank_ratio: 0.72        # fraction of near-white pixels
+  min_ink_ratio: 0.003         # some actual subject must be present
+  face_check: true
+  face_scale_factor: 1.1
+  face_min_neighbors: 5
+  face_min_size_ratio: 0.08
+  blank_pixel_threshold: 245
+  ink_pixel_threshold: 160       # pixels at or below this count as subject detail
+
+security:
+  bcrypt_rounds: 12
+  login_rate_limit: 8
+  login_rate_window_seconds: 300
+  max_failed_logins_before_audit: 3
+
+evaluation:
+  dataset: synthetic-v1
+  cases: 24
+  seed: 2601
+  min_field_accuracy: 0.90   # target shown on the accuracy page
+  min_mismatch_recall: 0.85
+  min_photo_accuracy: 0.90

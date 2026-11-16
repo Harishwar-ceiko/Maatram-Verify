@@ -1,0 +1,32 @@
+# --- Python -----------------------------------------------------------------
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# --- Local data, uploads, generated sets and secrets ------------------------
+backend/data/
+backend/tests/_uploads/
+backend/samples/*.png
+backend/synthetic/
+backend/reports/
+*.db
+*.db-wal
+*.db-shm
+
+# --- Environment ------------------------------------------------------------
+.env
+backend/.env
+
+# --- Node -------------------------------------------------------------------
+frontend/node_modules/
+frontend/dist/
+frontend/shots/
+.taste-skill/
+.agents/
+
+# --- OS / editors -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
