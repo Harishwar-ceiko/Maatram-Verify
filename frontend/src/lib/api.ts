@@ -18,9 +18,43 @@ export interface Mark {
   grade: string | null;
 }
 
+export interface EducationSummary {
+  id: number;
+  class_level: number;
+  register_number: string;
+  exam_year: number;
+  board: string;
+}
+
+export interface EducationRecord extends EducationSummary {
+  marks: Mark[];
+}
+
+export interface EducationRecordInput {
+  register_number: string;
+  exam_year: number;
+  board: string;
+  marks: { subject: string; marks_obtained: number; max_marks: number | null }[];
+}
+
+export type DocumentKind =
+  | "marksheet_10"
+  | "marksheet_11"
+  | "marksheet_12"
+  | "marksheet"
+  | "aadhaar"
+  | "income_certificate"
+  | "community_certificate"
+  | "first_graduate_certificate"
+  | "photo"
+  | "other";
+
 export interface DocumentRecord {
   id: number;
-  kind: "marksheet" | "photo" | "other";
+  kind: DocumentKind;
+  kind_label: string;
+  classification: Record<string, unknown> | null;
+  masked_aadhaar: string | null;
   original_filename: string;
   mime_type: string;
   size_bytes: number;
@@ -50,6 +84,31 @@ export interface Finding {
   detail: string | null;
   severity: string;
   confidence: number | null;
+  meta: Record<string, unknown> | null;
+}
+
+export interface IdentityMatrixValue {
+  source: string;
+  kind: string;
+  document_id: number | null;
+  filename: string | null;
+  value: string;
+  status: string;
+  similarity: number | null;
+}
+
+export interface IdentityMatrixField {
+  field: string;
+  label: string;
+  status: string;
+  detail: string;
+  values: IdentityMatrixValue[];
+}
+
+export interface IdentityMatrix {
+  fields: IdentityMatrixField[];
+  checked: number;
+  mismatched: number;
 }
 
 export interface Run {
@@ -75,14 +134,18 @@ export type ApplicationStatus =
 export interface Application {
   id: number;
   reference: string;
-  program: string;
   applicant_name: string;
-  register_number: string;
-  exam_year: number;
-  board: string;
+  date_of_birth: string;
+  father_name: string;
+  mother_name: string;
+  phone: string;
+  address: string;
+  is_orphan: boolean;
+  is_first_graduate: boolean;
   status: ApplicationStatus;
   created_at: string;
   submitted_at: string | null;
+  classes: EducationSummary[];
 }
 
 export interface ExtractMark {
@@ -97,6 +160,24 @@ export interface ExtractMark {
   page: number;
   corrected_subject: string | null;
   corrected_marks: number | null;
+}
+
+export interface DocumentVerdict {
+  id: number;
+  kind: string;
+  label: string;
+  filename: string;
+  status: "pass" | "review" | "fail" | "pending";
+  findings: number;
+  critical: number;
+  warnings: number;
+  classification: Record<string, unknown> | null;
+  masked_aadhaar: string | null;
+}
+
+export interface MarkCorrectionResult {
+  mark: ExtractMark;
+  run: { id: number; status: string };
 }
 
 export interface ApplicationReview {
@@ -114,7 +195,7 @@ export interface ApplicationReview {
 }
 
 export interface ApplicationDetail extends Application {
-  marks: Mark[];
+  education: EducationRecord[];
   documents: DocumentRecord[];
   latest_run: Run | null;
   extracted_marks: ExtractMark[];
@@ -126,7 +207,7 @@ export interface ReviewQueueItem {
   application_id: number;
   reference: string;
   applicant_name: string;
-  program: string;
+  class_12_year: number | null;
   application_status: string;
   status: string;
   priority: number;
@@ -166,7 +247,7 @@ export interface AdminActivity {
   application_id: number;
   reference: string;
   applicant_name: string;
-  program: string;
+  class_12_year: number | null;
   status: string;
   overall: string | null;
   verdict: string | null;
@@ -216,12 +297,61 @@ export interface AccuracyRule {
   accuracy: number;
 }
 
+export interface AccuracyDocumentKind {
+  kind: string;
+  label: string;
+  short: string;
+  fixtures: number;
+  fields_total: number;
+  fields_correct: number;
+  field_accuracy: number;
+  classification_accuracy: number;
+}
+
+export interface AccuracyDocumentSummary {
+  fixtures: number;
+  fields_total: number;
+  fields_correct: number;
+  field_accuracy: number;
+  classification_accuracy: number;
+  checksum: { tested: number; correct: number; accuracy: number };
+  by_kind: AccuracyDocumentKind[];
+}
+
+export interface AccuracyClassificationLabel {
+  kind: string;
+  label: string;
+  short: string;
+}
+
+export interface AccuracyClassification {
+  labels: AccuracyClassificationLabel[];
+  matrix: number[][];
+  correct: number;
+  total: number;
+  accuracy: number;
+  by_expected: {
+    kind: string;
+    label: string;
+    short: string;
+    correct: number;
+    total: number;
+    accuracy: number;
+  }[];
+}
+
 export interface AccuracySummary {
   status: string;
   dataset: string;
   cases: number;
   field_accuracy: number;
   fields: { name: number; register_number: number; exam_year: number };
+  mark_sheets?: {
+    total: number;
+    class_10: number;
+    class_11: number;
+    class_12: number;
+  };
   subjects: {
     total: number;
     found: number;
@@ -266,8 +396,20 @@ export interface AccuracySummary {
       error: string | null;
     }[];
   };
+  documents?: AccuracyDocumentSummary;
+  classification?: AccuracyClassification;
+  counts?: {
+    class_12: number;
+    class_11: number;
+    mark_sheets: number;
+    documents: number;
+    photos: number;
+  } | null;
   variants: AccuracyVariant[];
-  targets: Record<"field_accuracy" | "mismatch_recall" | "photo_rule_accuracy", AccuracyTarget>;
+  targets: Record<
+    "field_accuracy" | "document_field_accuracy" | "mismatch_recall" | "photo_rule_accuracy",
+    AccuracyTarget
+  >;
   errors: { case: string; variant: string; error: string }[];
   error?: string;
   finished_at?: string;
@@ -291,6 +433,7 @@ export interface AccuracyHistoryEntry {
   status: string;
   created_at: string;
   field_accuracy: number | null;
+  document_accuracy: number | null;
   mismatch_recall: number | null;
   photo_accuracy: number | null;
 }
@@ -301,9 +444,24 @@ export interface AccuracyResponse {
   running: boolean;
 }
 
+export interface DocumentKindConfig {
+  label: string;
+  short: string;
+  extractor: string;
+  class_level?: number;
+  slot: "single" | "multiple";
+  required_fields: string[];
+  generic_required?: boolean;
+}
+
 export interface MetaConfig {
   app: { name: string; programme: string; problem: string; timezone: string };
-  subjects: { required: string[]; known: string[]; fuzzy_threshold: number };
+  subjects: {
+    required: string[];
+    by_class: Record<string, string[]>;
+    known: string[];
+    fuzzy_threshold: number;
+  };
   uploads: { max_mb: number; extensions: string[]; max_pages: number };
   photo: {
     min_width: number;
@@ -321,6 +479,23 @@ export interface MetaConfig {
     face_check: boolean;
   };
   ocr: { engine: string; low_confidence: number };
+  documents: {
+    kinds: Record<string, DocumentKindConfig>;
+    field_labels: Record<string, string>;
+    classifier: { min_score: number; ambiguous_margin: number };
+    aadhaar: {
+      number_length: number;
+      mask_prefix: string;
+      qr: { required: boolean; mismatch_severity: string };
+    };
+    income: {
+      max_annual_income: number;
+      validity_months: number;
+      future_tolerance_days: number;
+    };
+    community: { known_values: string[]; future_tolerance_days: number };
+    first_graduate: { future_tolerance_days: number };
+  };
 }
 
 export class ApiError extends Error {
@@ -409,7 +584,7 @@ function formatDetail(detail: unknown): string {
 export function uploadDocument(
   applicationId: number | string,
   file: File,
-  kind: "marksheet" | "photo",
+  kind: Exclude<DocumentKind, "other"> | "auto",
   onProgress?: (percent: number) => void,
 ): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
@@ -517,13 +692,27 @@ export const api = {
     request<Run>(`/applications/${id}/validate`, { method: "POST" }),
   deleteDocument: (documentId: number) =>
     request<void>(`/documents/${documentId}`, { method: "DELETE" }),
+  correctExtractedMark: (
+    documentId: number,
+    markId: number,
+    payload: { subject: string | null; marks_obtained: number },
+  ) =>
+    request<MarkCorrectionResult>(`/admin/documents/${documentId}/marks/${markId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   createApplication: (payload: {
-    program: string;
     applicant_name: string;
-    register_number: string;
-    exam_year: number;
-    board: string;
-    marks: { subject: string; marks_obtained: number; max_marks: number | null }[];
+    date_of_birth: string;
+    father_name: string;
+    mother_name: string;
+    phone: string;
+    address: string;
+    is_orphan: boolean;
+    is_first_graduate: boolean;
+    class_10: EducationRecordInput;
+    class_11: EducationRecordInput | null;
+    class_12: EducationRecordInput;
   }) =>
     request<ApplicationDetail>("/applications", {
       method: "POST",

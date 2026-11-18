@@ -1,10 +1,13 @@
 """Seed the prototype database.
 
-Creates one admin, two students and five applications that exercise every
-validation state: all match, mark mismatch, bad photo, missing subject and a
-duplicate upload. Mark sheets and portraits are generated deterministically;
-the mismatch and photo cases are validated once so the review queue and the
-dashboard have real results on a fresh demo.
+Creates one admin, two students and ten applications that exercise every
+validation state: all match, mark mismatch, bad photo, missing subject,
+duplicate upload, income above the limit, an expired income certificate, an
+Aadhaar checksum failure, a community-certificate name conflict and a Class 11
+versus Class 12 name conflict. Mark sheets, certificates and portraits are
+generated deterministically; every exception is validated once so the review
+queue, the document dashboard, the consistency matrix and the demo all have
+real results on a fresh database.
 
 Usage:
     python scripts/seed.py [--reset]
@@ -16,7 +19,7 @@ from __future__ import annotations
 
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -30,7 +33,7 @@ from app.core.security import hash_password  # noqa: E402
 from app.db.init_db import init_db  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.models import Base  # noqa: E402
-from app.models.application import Application, EnteredMark  # noqa: E402
+from app.models.application import Application, EducationRecord, EnteredMark  # noqa: E402
 from app.models.document import Document  # noqa: E402
 from app.models.enums import ApplicationStatus, DocumentKind, Role  # noqa: E402
 from app.models.review import ReviewItem  # noqa: E402
@@ -38,40 +41,90 @@ from app.models.user import User  # noqa: E402
 from app.models.validation import ValidationRun  # noqa: E402
 from app.services import storage  # noqa: E402
 from app.services.references import new_reference  # noqa: E402
-from app.services.synthetic import _base_portrait, _grade, _render_sheet  # noqa: E402
+from app.services.synthetic import (  # noqa: E402
+    _base_portrait,
+    _grade,
+    _render_aadhaar,
+    _render_certificate,
+    _render_sheet,
+    synthetic_aadhaar,
+)
 from app.services.validation import run_validation  # noqa: E402
 
 ADMIN = {"email": "admin@maatram.example", "password": "Admin@2026", "full_name": "Priya Raghavan"}
+
 STUDENTS = [
     {
         "email": "ananya@student.example",
         "password": "Student@2026",
         "full_name": "Ananya Subramanian",
-        "register_number": "REG2026A014",
+        "date_of_birth": date(2008, 6, 14),
+        "father_name": "Suresh Subramanian",
+        "mother_name": "Kavitha Subramanian",
+        "phone": "+91 98400 22114",
+        "address": "12, Bharathi Street, T. Nagar, Chennai 600017",
+        "gender": "Female",
+        "is_orphan": False,
+        "is_first_graduate": True,
     },
     {
         "email": "rohan@student.example",
         "password": "Student@2026",
         "full_name": "Rohan Kumaravel",
-        "register_number": "REG2026B027",
+        "date_of_birth": date(2007, 11, 2),
+        "father_name": "Kumaravel Murugan",
+        "mother_name": "Vasanthi Murugan (guardian)",
+        "phone": "+91 98410 33227",
+        "address": "4/27, Kamaraj Nagar, Coimbatore 641014",
+        "gender": "Male",
+        "is_orphan": True,
+        "is_first_graduate": False,
     },
+]
+
+CLASS_10_MARKS = [
+    ("Mathematics", 94, 100),
+    ("Science", 91, 100),
+    ("Social Science", 88, 100),
+    ("English", 90, 100),
+    ("Tamil", 86, 100),
+]
+CLASS_11_MARKS = [
+    ("Mathematics", 88, 100),
+    ("English", 90, 100),
+    ("Physics", 85, 100),
+    ("Chemistry", 84, 100),
+    ("Computer Science", 92, 100),
 ]
 
 APPLICATIONS = [
     {
+        "scenario": "all_valid",
         "student": 0,
-        "program": "B.Sc. Computer Science",
-        "applicant_name": "Ananya Subramanian",
-        "register_number": "REG2026A014",
-        "exam_year": 2026,
-        "board": "State Board of Examinations",
         "status": ApplicationStatus.submitted.value,
-        "marks": [
-            ("Mathematics", 92, 100),
-            ("English", 88, 100),
-            ("Physics", 90, 100),
-            ("Chemistry", 86, 100),
-        ],
+        "class_10": {
+            "register_number": "REG2024A014",
+            "exam_year": 2024,
+            "board": "State Board of Examinations",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025A014",
+            "exam_year": 2025,
+            "board": "State Board of Examinations",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026A014",
+            "exam_year": 2026,
+            "board": "State Board of Examinations",
+            "marks": [
+                ("Mathematics", 92, 100),
+                ("English", 88, 100),
+                ("Physics", 90, 100),
+                ("Chemistry", 86, 100),
+            ],
+        },
         "sheet": [
             ("Mathematics", 92, 100),
             ("English", 88, 100),
@@ -81,19 +134,32 @@ APPLICATIONS = [
         "photo": "good",
     },
     {
+        "scenario": "mark_mismatch",
         "student": 0,
-        "program": "B.E. Electronics and Communication",
-        "applicant_name": "Ananya Subramanian",
-        "register_number": "REG2026A014",
-        "exam_year": 2026,
-        "board": "State Board of Examinations",
         "status": ApplicationStatus.needs_review.value,
-        "marks": [
-            ("Mathematics", 85, 100),
-            ("English", 92, 100),
-            ("Physics", 78, 100),
-            ("Chemistry", 81, 100),
-        ],
+        "class_10": {
+            "register_number": "REG2024A014",
+            "exam_year": 2024,
+            "board": "State Board of Examinations",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025A014",
+            "exam_year": 2025,
+            "board": "State Board of Examinations",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026A014",
+            "exam_year": 2026,
+            "board": "State Board of Examinations",
+            "marks": [
+                ("Mathematics", 85, 100),
+                ("English", 92, 100),
+                ("Physics", 78, 100),
+                ("Chemistry", 81, 100),
+            ],
+        },
         "sheet": [
             ("Mathematics", 88, 100),
             ("English", 92, 100),
@@ -109,19 +175,32 @@ APPLICATIONS = [
         "validate": True,
     },
     {
+        "scenario": "bad_photo",
         "student": 1,
-        "program": "B.Sc. Computer Science",
-        "applicant_name": "Rohan Kumaravel",
-        "register_number": "REG2026B027",
-        "exam_year": 2026,
-        "board": "Central Board of Secondary Education",
         "status": ApplicationStatus.needs_review.value,
-        "marks": [
-            ("Mathematics", 74, 100),
-            ("English", 69, 100),
-            ("Physics", 72, 100),
-            ("Chemistry", 70, 100),
-        ],
+        "class_10": {
+            "register_number": "REG2024B027",
+            "exam_year": 2024,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025B027",
+            "exam_year": 2025,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026B027",
+            "exam_year": 2026,
+            "board": "Central Board of Secondary Education",
+            "marks": [
+                ("Mathematics", 74, 100),
+                ("English", 69, 100),
+                ("Physics", 72, 100),
+                ("Chemistry", 70, 100),
+            ],
+        },
         "sheet": [
             ("Mathematics", 74, 100),
             ("English", 69, 100),
@@ -135,19 +214,32 @@ APPLICATIONS = [
         "validate": True,
     },
     {
+        "scenario": "missing_subject",
         "student": 1,
-        "program": "B.Sc. Physical Sciences",
-        "applicant_name": "Rohan Kumaravel",
-        "register_number": "REG2026B027",
-        "exam_year": 2026,
-        "board": "Central Board of Secondary Education",
         "status": ApplicationStatus.submitted.value,
-        "marks": [
-            ("Mathematics", 81, 100),
-            ("English", 77, 100),
-            ("Physics", 84, 100),
-            ("Chemistry", 80, 100),
-        ],
+        "class_10": {
+            "register_number": "REG2024B027",
+            "exam_year": 2024,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025B027",
+            "exam_year": 2025,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026B027",
+            "exam_year": 2026,
+            "board": "Central Board of Secondary Education",
+            "marks": [
+                ("Mathematics", 81, 100),
+                ("English", 77, 100),
+                ("Physics", 84, 100),
+                ("Chemistry", 80, 100),
+            ],
+        },
         "sheet": [
             ("Mathematics", 81, 100),
             ("English", 77, 100),
@@ -160,19 +252,32 @@ APPLICATIONS = [
         "validate": True,
     },
     {
+        "scenario": "duplicate_upload",
         "student": 0,
-        "program": "B.Sc. Data Science",
-        "applicant_name": "Ananya Subramanian",
-        "register_number": "REG2026A014",
-        "exam_year": 2025,
-        "board": "State Board of Examinations",
         "status": ApplicationStatus.submitted.value,
-        "marks": [
-            ("Mathematics", 88, 100),
-            ("English", 90, 100),
-            ("Physics", 93, 100),
-            ("Chemistry", 92, 100),
-        ],
+        "class_10": {
+            "register_number": "REG2023A014",
+            "exam_year": 2023,
+            "board": "State Board of Examinations",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2024A014",
+            "exam_year": 2024,
+            "board": "State Board of Examinations",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2025A014",
+            "exam_year": 2025,
+            "board": "State Board of Examinations",
+            "marks": [
+                ("Mathematics", 88, 100),
+                ("English", 90, 100),
+                ("Physics", 93, 100),
+                ("Chemistry", 92, 100),
+            ],
+        },
         "sheet": [
             ("Mathematics", 88, 100),
             ("English", 90, 100),
@@ -185,7 +290,220 @@ APPLICATIONS = [
         ],
         "validate": True,
     },
+    {
+        "scenario": "income_above_threshold",
+        "student": 0,
+        "status": ApplicationStatus.needs_review.value,
+        "class_10": {
+            "register_number": "REG2024A014",
+            "exam_year": 2024,
+            "board": "State Board of Examinations",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025A014",
+            "exam_year": 2025,
+            "board": "State Board of Examinations",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026A014",
+            "exam_year": 2026,
+            "board": "State Board of Examinations",
+            "marks": [
+                ("Mathematics", 92, 100),
+                ("English", 88, 100),
+                ("Physics", 90, 100),
+                ("Chemistry", 86, 100),
+            ],
+        },
+        "sheet": [
+            ("Mathematics", 92, 100),
+            ("English", 88, 100),
+            ("Physics", 90, 100),
+            ("Chemistry", 86, 100),
+        ],
+        "photo": "good",
+        "supporting": [
+            {"kind": "income_certificate", "profile": "above_threshold"}
+        ],
+        "fallback_reasons": [
+            "The income certificate records INR 320,000, above the INR 250,000 limit."
+        ],
+        "validate": True,
+    },
+    {
+        "scenario": "income_expired",
+        "student": 1,
+        "status": ApplicationStatus.needs_review.value,
+        "class_10": {
+            "register_number": "REG2024B027",
+            "exam_year": 2024,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025B027",
+            "exam_year": 2025,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026B027",
+            "exam_year": 2026,
+            "board": "Central Board of Secondary Education",
+            "marks": [
+                ("Mathematics", 74, 100),
+                ("English", 69, 100),
+                ("Physics", 72, 100),
+                ("Chemistry", 70, 100),
+            ],
+        },
+        "sheet": [
+            ("Mathematics", 74, 100),
+            ("English", 69, 100),
+            ("Physics", 72, 100),
+            ("Chemistry", 70, 100),
+        ],
+        "photo": "good",
+        "supporting": [{"kind": "income_certificate", "profile": "expired"}],
+        "fallback_reasons": [
+            "The income certificate is more than twelve months old."
+        ],
+        "validate": True,
+    },
+    {
+        "scenario": "aadhaar_checksum",
+        "student": 0,
+        "status": ApplicationStatus.needs_review.value,
+        "class_10": {
+            "register_number": "REG2024A014",
+            "exam_year": 2024,
+            "board": "State Board of Examinations",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025A014",
+            "exam_year": 2025,
+            "board": "State Board of Examinations",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026A014",
+            "exam_year": 2026,
+            "board": "State Board of Examinations",
+            "marks": [
+                ("Mathematics", 92, 100),
+                ("English", 88, 100),
+                ("Physics", 90, 100),
+                ("Chemistry", 86, 100),
+            ],
+        },
+        "sheet": [
+            ("Mathematics", 92, 100),
+            ("English", 88, 100),
+            ("Physics", 90, 100),
+            ("Chemistry", 86, 100),
+        ],
+        "photo": "good",
+        "supporting": [
+            {"kind": "aadhaar", "profile": "invalid_checksum", "seed": 2601}
+        ],
+        "fallback_reasons": [
+            "The Aadhaar number failed the Verhoeff checksum."
+        ],
+        "validate": True,
+    },
+    {
+        "scenario": "community_name_mismatch",
+        "student": 1,
+        "status": ApplicationStatus.needs_review.value,
+        "class_10": {
+            "register_number": "REG2024B027",
+            "exam_year": 2024,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025B027",
+            "exam_year": 2025,
+            "board": "Central Board of Secondary Education",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026B027",
+            "exam_year": 2026,
+            "board": "Central Board of Secondary Education",
+            "marks": [
+                ("Mathematics", 81, 100),
+                ("English", 77, 100),
+                ("Physics", 84, 100),
+                ("Chemistry", 80, 100),
+            ],
+        },
+        "sheet": [
+            ("Mathematics", 81, 100),
+            ("English", 77, 100),
+            ("Physics", 84, 100),
+            ("Chemistry", 80, 100),
+        ],
+        "photo": "good",
+        "supporting": [
+            {
+                "kind": "community_certificate",
+                "profile": "name_mismatch",
+                "printed_name": "Arjun Kumaravel",
+            }
+        ],
+        "fallback_reasons": [
+            "The community certificate carries a different applicant name."
+        ],
+        "validate": True,
+    },
+    {
+        "scenario": "class_11_name_mismatch",
+        "student": 0,
+        "status": ApplicationStatus.needs_review.value,
+        "class_10": {
+            "register_number": "REG2024A014",
+            "exam_year": 2024,
+            "board": "State Board of Examinations",
+            "marks": CLASS_10_MARKS,
+        },
+        "class_11": {
+            "register_number": "REG2025A014",
+            "exam_year": 2025,
+            "board": "State Board of Examinations",
+            "marks": CLASS_11_MARKS,
+        },
+        "class_12": {
+            "register_number": "REG2026A014",
+            "exam_year": 2026,
+            "board": "State Board of Examinations",
+            "marks": [
+                ("Mathematics", 92, 100),
+                ("English", 88, 100),
+                ("Physics", 90, 100),
+                ("Chemistry", 86, 100),
+            ],
+        },
+        "sheet": [
+            ("Mathematics", 92, 100),
+            ("English", 88, 100),
+            ("Physics", 90, 100),
+            ("Chemistry", 86, 100),
+        ],
+        "extra_sheets": [
+            {"class_level": 11, "name": "Ananya Ramanathan"}
+        ],
+        "photo": "good",
+        "fallback_reasons": [
+            "The name on the Class 11 mark sheet does not match the application."
+        ],
+        "validate": True,
+    },
 ]
+
 
 
 def _png(image: Image.Image) -> bytes:
@@ -208,7 +526,29 @@ def _portrait(kind: str) -> bytes:
     return _png(base)
 
 
-def _sheet_bytes(spec: dict) -> bytes:
+def _classification(kind: str, method: str = "keyword") -> dict:
+    """Mirror the evidence shape produced by the upload-time classifier."""
+
+    return {
+        "kind": kind,
+        "method": method,
+        "requested": kind,
+        "confidence": 96.0 if method == "keyword" else None,
+        "ambiguous": False,
+        "signals": [],
+        "note": None,
+    }
+
+
+def _sheet_bytes(
+    spec: dict,
+    applicant_name: str,
+    *,
+    class_level: int = 12,
+    name: str | None = None,
+) -> bytes:
+    record = spec[f"class_{class_level}"]
+    rows = spec["sheet"] if class_level == 12 else record["marks"]
     subjects = [
         {
             "subject": subject,
@@ -216,16 +556,94 @@ def _sheet_bytes(spec: dict) -> bytes:
             "max_marks": max_marks,
             "grade": _grade(marks),
         }
-        for subject, marks, max_marks in spec["sheet"]
+        for subject, marks, max_marks in rows
     ]
     return _png(
         _render_sheet(
-            spec["applicant_name"],
-            spec["register_number"],
-            spec["exam_year"],
-            spec["board"],
+            name or applicant_name,
+            record["register_number"],
+            record["exam_year"],
+            record["board"],
             subjects,
+            class_level=class_level,
         )
+    )
+
+
+def _supporting_document(item: dict, details: dict) -> tuple[str, bytes, str]:
+    """Render one supporting document from the same synthetic primitives the
+    accuracy corpus uses, so the demo and the benchmark cannot drift apart."""
+
+    kind = item["kind"]
+    profile = item["profile"]
+    name = details["full_name"]
+    father = details["father_name"]
+    address = details["address"]
+
+    if kind == "aadhaar":
+        number = synthetic_aadhaar(
+            int(item.get("seed", 2601)),
+            valid=profile not in ("invalid_checksum", "checksum_failure"),
+        )
+        image = _render_aadhaar(
+            name,
+            number,
+            gender=details["gender"],
+            address=address,
+            date_of_birth=details["date_of_birth"].strftime("%d/%m/%Y"),
+        )
+        return kind, _png(image), f"aadhaar-{number[-4:]}.png"
+
+    if kind == "income_certificate":
+        if profile == "above_threshold":
+            amount = "INR 3,20,000"
+            issued = date.today() - timedelta(days=30)
+            certificate = "INC-2026-0104"
+        elif profile == "expired":
+            amount = "INR 2,00,000"
+            issued = date.today() - timedelta(days=500)
+            certificate = "INC-2025-0077"
+        else:
+            raise ValueError(f"Unknown income profile: {profile}")
+        image = _render_certificate(
+            "Income Certificate",
+            certificate_number=certificate,
+            name=name,
+            father_name=father,
+            address=address,
+            issue_date=issued.strftime("%d/%m/%Y"),
+            rows=[("Annual Income", amount)],
+        )
+        return kind, _png(image), f"income-{certificate.lower()}.png"
+
+    if kind == "community_certificate":
+        if profile != "name_mismatch":
+            raise ValueError(f"Unknown community profile: {profile}")
+        certificate = "COM-2026-0031"
+        image = _render_certificate(
+            "Community Certificate",
+            certificate_number=certificate,
+            name=item.get("printed_name") or name,
+            father_name=father,
+            address=address,
+            issue_date=(date.today() - timedelta(days=25)).strftime("%d/%m/%Y"),
+            rows=[("Community", "BC")],
+        )
+        return kind, _png(image), f"community-{certificate.lower()}.png"
+
+    raise ValueError(f"Unknown supporting document kind: {kind}")
+
+
+def _education_record(class_level: int, spec: dict) -> EducationRecord:
+    return EducationRecord(
+        class_level=class_level,
+        register_number=spec["register_number"],
+        exam_year=spec["exam_year"],
+        board=spec["board"],
+        marks=[
+            EnteredMark(subject=subject, marks_obtained=marks, max_marks=max_marks)
+            for subject, marks, max_marks in spec["marks"]
+        ],
     )
 
 
@@ -237,6 +655,7 @@ def _attach(
     filename: str,
     uploaded_by_id: int,
     duplicate_of: Document | None = None,
+    classification: dict | None = None,
 ) -> Document:
     fmt, pages, size = storage.validate_upload(data, kind)
     stored_name, _path = storage.store_bytes(application.id, data)
@@ -244,6 +663,7 @@ def _attach(
     document = Document(
         application_id=application.id,
         kind=kind,
+        classification=classification or _classification(kind),
         original_filename=filename,
         stored_name=stored_name,
         mime_type=storage.MIME[fmt],
@@ -329,33 +749,59 @@ def main() -> None:
         created: list[tuple[dict, Application]] = []
         if not db.scalar(select(Application.id)):
             for spec in APPLICATIONS:
+                details = STUDENTS[spec["student"]]
+                student = users[spec["student"]]
                 application = Application(
                     reference=new_reference(),
-                    student_id=users[spec["student"]].id,
-                    program=spec["program"],
-                    applicant_name=spec["applicant_name"],
-                    register_number=spec["register_number"],
-                    exam_year=spec["exam_year"],
-                    board=spec["board"],
+                    student_id=student.id,
+                    applicant_name=student.full_name,
+                    date_of_birth=details["date_of_birth"],
+                    father_name=details["father_name"],
+                    mother_name=details["mother_name"],
+                    phone=details["phone"],
+                    address=details["address"],
+                    is_orphan=details["is_orphan"],
+                    is_first_graduate=details["is_first_graduate"],
                     status=spec["status"],
                     submitted_at=datetime.now(timezone.utc),
                 )
-                application.entered_marks = [
-                    EnteredMark(subject=subject, marks_obtained=marks, max_marks=max_marks)
-                    for subject, marks, max_marks in spec["marks"]
+                application.education_records = [
+                    _education_record(10, spec["class_10"]),
+                    *(
+                        [_education_record(11, spec["class_11"])]
+                        if spec.get("class_11")
+                        else []
+                    ),
+                    _education_record(12, spec["class_12"]),
                 ]
                 db.add(application)
                 db.flush()
 
-                sheet_bytes = _sheet_bytes(spec)
+                sheet_bytes = _sheet_bytes(spec, student.full_name)
                 _attach(
                     db,
                     application,
-                    DocumentKind.marksheet.value,
+                    DocumentKind.marksheet_12.value,
                     sheet_bytes,
-                    f"marksheet-{spec['register_number'].lower()}.png",
-                    users[spec["student"]].id,
+                    f"marksheet-{spec['class_12']['register_number'].lower()}.png",
+                    student.id,
                 )
+                for extra in spec.get("extra_sheets", []):
+                    level = int(extra["class_level"])
+                    extra_bytes = _sheet_bytes(
+                        spec,
+                        student.full_name,
+                        class_level=level,
+                        name=extra.get("name"),
+                    )
+                    _attach(
+                        db,
+                        application,
+                        f"marksheet_{level}",
+                        extra_bytes,
+                        f"marksheet-{level}-{spec[f'class_{level}']['register_number'].lower()}.png",
+                        student.id,
+                    )
                 photo_bytes = _portrait(spec["photo"])
                 photo_doc = _attach(
                     db,
@@ -363,8 +809,19 @@ def main() -> None:
                     DocumentKind.photo.value,
                     photo_bytes,
                     "photo-portrait.png",
-                    users[spec["student"]].id,
+                    student.id,
+                    classification=_classification("photo", "image_heuristic"),
                 )
+                for item in spec.get("supporting", []):
+                    kind, data, filename = _supporting_document(item, details)
+                    _attach(
+                        db,
+                        application,
+                        kind,
+                        data,
+                        filename,
+                        student.id,
+                    )
                 created.append((spec, application))
                 if spec["photo"] == "duplicate":
                     original = next(
@@ -407,7 +864,12 @@ def main() -> None:
         for record in STUDENTS:
             print(f"  student {record['email']} / {record['password']}")
         for spec, application in created:
-            print(f"  {application.reference}  {application.program}  ({application.status})")
+            class_12 = spec["class_12"]
+            print(
+                f"  {application.reference}  {application.applicant_name} | "
+                f"{spec['scenario']} | Class 12 {class_12['exam_year']}  "
+                f"({application.status})"
+            )
         print(f"  review queue populated: {open_reviews} open item(s)")
     finally:
         db.close()

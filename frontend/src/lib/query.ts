@@ -38,6 +38,7 @@ export const STATUS_LABELS: Record<string, string> = {
   rejected: "Rejected",
   match: "Match",
   mismatch: "Mismatch",
+  not_available: "Not available",
   pass: "Pass",
   fail: "Fail",
   pending: "Pending",

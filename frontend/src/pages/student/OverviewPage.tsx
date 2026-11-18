@@ -24,7 +24,7 @@ export function OverviewPage() {
     <AppShell>
       <PageHeader
         title="Your applications"
-        description="One file per programme. Enter your marks, attach the sheet, and each check resolves on this page."
+        description="One file per student. Enter your details and school records, attach the documents, and each check resolves on this page."
         actions={
           <Link to="/applications/new">
             <Button>
@@ -42,7 +42,7 @@ export function OverviewPage() {
             {applications.isLoading ? "—" : total}
           </p>
           <p className="mt-2 hidden text-[12px] text-muted sm:block">
-            {total === 0 ? "Your first one takes about five minutes." : "Across all programmes."}
+            {total === 0 ? "Your first one takes about five minutes." : "Across all applications."}
           </p>
         </div>
         <div className="stat p-3.5 sm:p-[18px_20px]">
@@ -113,7 +113,7 @@ export function OverviewPage() {
                 <p className="text-[13px] font-medium">Complete or missing</p>
                 <p className="mt-1 text-[12px] leading-relaxed text-muted">
                   {config.data
-                    ? `Required subjects: ${config.data.subjects.required.join(", ")}.`
+                    ? `Class 12 subjects: ${config.data.subjects.required.join(", ")}.`
                     : "Required subjects, duplicate files and identity conflicts are checked too."}
                 </p>
               </li>

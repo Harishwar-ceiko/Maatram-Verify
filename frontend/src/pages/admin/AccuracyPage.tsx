@@ -9,7 +9,7 @@ import {
   SectionCard,
   Skeleton,
 } from "../../components/ui";
-import { api, type AccuracySummary } from "../../lib/api";
+import { api, type AccuracyClassification, type AccuracySummary } from "../../lib/api";
 
 function pct(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
@@ -114,10 +114,71 @@ function Matrix({ summary }: { summary: AccuracySummary }) {
   );
 }
 
+function ConfusionMatrix({
+  classification,
+}: {
+  classification: AccuracyClassification;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="data-table min-w-[560px]">
+        <thead>
+          <tr>
+            <th scope="col">Printed \ read as</th>
+            {classification.labels.map((label) => (
+              <th key={label.kind} scope="col" className="text-right">
+                {label.short}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {classification.labels.map((label, rowIndex) => (
+            <tr key={label.kind}>
+              <td className="font-medium">{label.label}</td>
+              {classification.matrix[rowIndex].map((count, columnIndex) => (
+                <td
+                  key={classification.labels[columnIndex].kind}
+                  className={
+                    rowIndex === columnIndex
+                      ? count > 0
+                        ? "num text-pass"
+                        : "num text-muted"
+                      : count > 0
+                        ? "num text-warn"
+                        : "num text-muted"
+                  }
+                >
+                  {count}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function RunDetails({ summary }: { summary: AccuracySummary }) {
   const rows = [
     ["Dataset", summary.dataset],
-    ["Mark sheets", String(summary.cases)],
+    [
+      "Mark sheets",
+      summary.mark_sheets
+        ? `${summary.cases} · ${summary.mark_sheets.class_11} × Class 11`
+        : String(summary.cases),
+    ],
+    [
+      "Supporting documents",
+      summary.documents ? String(summary.documents.fixtures) : "—",
+    ],
+    [
+      "Classified correctly",
+      summary.classification
+        ? `${summary.classification.correct}/${summary.classification.total}`
+        : "—",
+    ],
     ["Mean OCR confidence", `${summary.ocr_confidence}%`],
     ["Mean read time", duration(summary.mean_duration_ms)],
     ["Finished", stamp(summary.finished_at)],
@@ -202,7 +263,8 @@ export function AccuracyPage() {
               action={runButton}
             >
               Run the generator and evaluator once. This page then shows field-level extraction
-              accuracy, mismatch precision and recall, photo-rule accuracy and the cases that need
+              accuracy for mark sheets and supporting documents, mismatch precision and recall,
+              photo-rule accuracy, the document-type confusion matrix and the cases that need
               attention.
             </EmptyState>
           </SectionCard>
@@ -212,8 +274,12 @@ export function AccuracyPage() {
               <ul className="mt-3 grid gap-2 text-[12px] leading-relaxed text-muted">
                 <li>Name, register number and examination year extraction.</li>
                 <li>Subject rows and obtained marks, against the printed values.</li>
+                <li>Class 11 and Class 12 statements, scored side by side.</li>
                 <li>Mismatch detection, against injected entry errors.</li>
+                <li>Aadhaar name, birth detail, last four digits and Verhoeff checksum.</li>
+                <li>Income, community and first-graduate certificate fields.</li>
                 <li>Every photo rule, against labelled perturbations.</li>
+                <li>Document-type classification, as a confusion matrix.</li>
               </ul>
             </div>
             <div className="card-flat bg-paper-deep/50 p-5">
@@ -237,8 +303,8 @@ export function AccuracyPage() {
               against ground truth. This usually finishes in under a minute.
             </p>
             <p className="mt-4 text-[11px] text-muted">
-              Started {stamp(summary?.started_at ?? latest.created_at)} · {latest.total_cases || 24}{" "}
-              documents in the set
+              Started {stamp(summary?.started_at ?? latest.created_at)} · {latest.total_cases || 30}{" "}
+              mark sheets plus supporting documents
             </p>
           </div>
         </div>
@@ -248,7 +314,7 @@ export function AccuracyPage() {
         </Alert>
       ) : summary ? (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <TargetStat
               label="Field extraction"
               value={summary.field_accuracy}
@@ -256,6 +322,15 @@ export function AccuracyPage() {
               met={summary.targets.field_accuracy.met}
               detail="name, register and year"
             />
+            {summary.documents && summary.targets.document_field_accuracy ? (
+              <TargetStat
+                label="Document fields"
+                value={summary.documents.field_accuracy}
+                target={summary.targets.document_field_accuracy.target}
+                met={summary.targets.document_field_accuracy.met}
+                detail={`${summary.documents.fields_correct}/${summary.documents.fields_total} printed values`}
+              />
+            ) : null}
             <TargetStat
               label="Mismatch recall"
               value={summary.mismatch.recall}
@@ -382,6 +457,88 @@ export function AccuracyPage() {
                 </div>
               </SectionCard>
 
+              {summary.documents ? (
+                <SectionCard
+                  title="Supporting documents"
+                  aside={
+                    <span className="text-[11px] text-muted">
+                      {summary.documents.fields_correct}/{summary.documents.fields_total} fields read
+                      exactly
+                    </span>
+                  }
+                  bodyClassName="p-0"
+                >
+                  <div className="overflow-x-auto">
+                    <table className="data-table min-w-[560px]">
+                      <thead>
+                        <tr>
+                          <th scope="col">Document</th>
+                          <th scope="col" className="text-right">
+                            Fixtures
+                          </th>
+                          <th scope="col" className="text-right">
+                            Fields
+                          </th>
+                          <th scope="col" className="text-right">
+                            Field accuracy
+                          </th>
+                          <th scope="col" className="text-right">
+                            Classified
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.documents.by_kind.map((row) => (
+                          <tr key={row.kind}>
+                            <td className="font-medium">{row.label}</td>
+                            <td className="num">{row.fixtures}</td>
+                            <td className="num">
+                              {row.fields_correct}/{row.fields_total}
+                            </td>
+                            <td className="num">{pct(row.field_accuracy)}</td>
+                            <td className="num">{pct(row.classification_accuracy)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="grid gap-3 border-t border-line px-5 py-4 sm:grid-cols-2">
+                    <p className="text-[11.5px] leading-relaxed text-muted">
+                      Aadhaar checksum:{" "}
+                      <span className="text-ink-soft">
+                        {summary.documents.checksum.correct}/{summary.documents.checksum.tested}
+                      </span>{" "}
+                      correct. Fixtures include valid synthetic numbers and one with a broken
+                      Verhoeff digit; only the last four digits are stored.
+                    </p>
+                    <p className="text-[11.5px] leading-relaxed text-muted">
+                      Certificates are scored on name, certificate number, issue date and the
+                      printed income, community or first-graduate value.
+                    </p>
+                  </div>
+                </SectionCard>
+              ) : null}
+
+              {summary.classification ? (
+                <SectionCard
+                  title="Document type confusion"
+                  aside={
+                    <span className="text-[11px] text-muted">
+                      {summary.classification.correct}/{summary.classification.total} classified
+                      correctly
+                    </span>
+                  }
+                  bodyClassName="p-0"
+                >
+                  <ConfusionMatrix classification={summary.classification} />
+                  <div className="border-t border-line px-5 py-3 text-[11px] leading-relaxed text-muted">
+                    Rows are the printed document type; columns are the deterministic keyword
+                    classifier. The matrix covers every mark sheet and supporting document in the
+                    run.
+                  </div>
+                </SectionCard>
+              ) : null}
+
               <SectionCard
                 title="Photo rules"
                 aside={
@@ -452,7 +609,10 @@ export function AccuracyPage() {
                 <p className="text-[13px] font-medium">How the set is built</p>
                 <ul className="mt-3 grid gap-2 text-[11.5px] leading-relaxed text-muted">
                   <li>Fixed-seed generator; every identity and mark is fictional.</li>
-                  <li>Ground truth is written with the sheet, never taken from OCR.</li>
+                  <li>Class 12 and Class 11 statements print their class explicitly.</li>
+                  <li>Aadhaar cards use synthetic Verhoeff-checked numbers, never real ones.</li>
+                  <li>Certificates carry known income, community and first-graduate values.</li>
+                  <li>Ground truth is written with the document, never taken from OCR.</li>
                   <li>Entry errors are injected for known mismatch labels.</li>
                   <li>Photo labels come from the perturbation, not from the detector.</li>
                 </ul>
@@ -468,8 +628,8 @@ export function AccuracyPage() {
                           <span className="text-[10.5px] text-muted">{stamp(item.created_at)}</span>
                         </div>
                         <p className="mt-1 text-[10.5px] text-muted">
-                          {item.total_cases} sheets · field {pct(item.field_accuracy)} · recall{" "}
-                          {pct(item.mismatch_recall)}
+                          {item.total_cases} sheets · field {pct(item.field_accuracy)} · docs{" "}
+                          {pct(item.document_accuracy)} · recall {pct(item.mismatch_recall)}
                         </p>
                       </li>
                     ))}

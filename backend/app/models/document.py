@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -17,7 +17,12 @@ class Document(Base, TimestampMixin):
     application_id: Mapped[int] = mapped_column(
         ForeignKey("applications.id", ondelete="CASCADE"), index=True
     )
-    kind: Mapped[str] = mapped_column(String(20), default=DocumentKind.marksheet.value, nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(40), default=DocumentKind.marksheet_12.value, nullable=False
+    )
+    # Deterministic evidence from the upload-time classifier: matched phrases,
+    # scores and whether the applicant overrode the detected type.
+    classification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_name: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -40,6 +45,24 @@ class Document(Base, TimestampMixin):
     extracted_marks: Mapped[list["ExtractedMark"]] = relationship(
         back_populates="document", cascade="all, delete-orphan", order_by="ExtractedMark.id"
     )
+    aadhaar_record: Mapped["AadhaarRecord | None"] = relationship(
+        back_populates="document", uselist=False, cascade="all, delete-orphan"
+    )
+
+    @property
+    def masked_aadhaar(self) -> str | None:
+        record = self.aadhaar_record
+        if record is None:
+            return None
+        return f"XXXX XXXX {record.last4}"
+
+    @property
+    def kind_label(self) -> str:
+        # Imported lazily to keep model import order simple.
+        from app.core.config import rules
+
+        kinds = rules().get("documents", {}).get("kinds", {})
+        return str(kinds.get(self.kind, {}).get("label", self.kind.replace("_", " ").title()))
 
 
 class OcrResult(Base, TimestampMixin):
@@ -93,3 +116,29 @@ class ExtractedMark(Base):
     @property
     def effective_marks(self) -> float | None:
         return self.corrected_marks if self.corrected_marks is not None else self.marks_obtained
+
+
+class AadhaarRecord(Base, TimestampMixin):
+    """The only place a full Aadhaar number is kept.
+
+    The number is encrypted with the same Fernet key as the document bytes.
+    Every other layer (OCR fields, findings, logs, audit rows, the API and the
+    PDF) sees only ``last4`` or the masked display value.
+    """
+
+    __tablename__ = "aadhaar_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), index=True
+    )
+    number_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    last4: Mapped[str] = mapped_column(String(4), nullable=False)
+    checksum_valid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    qr_status: Mapped[str] = mapped_column(String(20), default="not_detected", nullable=False)
+    qr_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+
+    document: Mapped[Document] = relationship(back_populates="aadhaar_record")

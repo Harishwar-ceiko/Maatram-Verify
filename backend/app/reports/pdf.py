@@ -87,6 +87,8 @@ RESULT_TONES = {
     "missing_entry": WARN,
     "skipped": MUTED,
     "pending": MUTED,
+    "review": WARN,
+    "not_available": MUTED,
 }
 
 
@@ -124,6 +126,15 @@ def _base_styles() -> dict[str, ParagraphStyle]:
             textColor=INK,
             spaceBefore=0,
             spaceAfter=0,
+        ),
+        "h3": ParagraphStyle(
+            "h3",
+            fontName="Times-Roman",
+            fontSize=11.2,
+            leading=14,
+            textColor=INK,
+            spaceBefore=0,
+            spaceAfter=2,
         ),
         "body": ParagraphStyle(
             "body",
@@ -218,7 +229,7 @@ def _p(text: object, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape("" if text is None else str(text)), style)
 
 
-def _table_style(header: bool = True, zebra: bool = False) -> TableStyle:
+def _table_style(header: bool = True, zebra: bool = False, row_count: int = 0) -> TableStyle:
     commands = [
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
@@ -230,7 +241,7 @@ def _table_style(header: bool = True, zebra: bool = False) -> TableStyle:
         ("BACKGROUND", (0, 0), (-1, 0), PAPER_DEEP),
     ]
     if zebra:
-        for index in range(2, 30, 2):
+        for index in range(2, row_count, 2):
             commands.append(("BACKGROUND", (0, index), (-1, index), colors.HexColor("#f7f4ea")))
     return TableStyle(commands)
 
@@ -257,6 +268,16 @@ def _format_date(value: datetime | None) -> str:
     if value is None:
         return "—"
     return value.strftime("%d %b %Y, %H:%M")
+
+
+def _format_day(value) -> str:
+    if value is None:
+        return "—"
+    return value.strftime("%d %b %Y")
+
+
+def _yes_no(value: bool) -> str:
+    return "Yes" if value else "No"
 
 
 def _overall_tone(overall: str | None) -> tuple[colors.Color, colors.Color]:
@@ -364,20 +385,32 @@ def _identity_block(application, run, styles):
         [
             _p("Applicant", styles["label"]),
             _p(application.applicant_name, styles["value"]),
-            _p("Register no.", styles["label"]),
-            _p(application.register_number, styles["value"]),
+            _p("Date of birth", styles["label"]),
+            _p(_format_day(application.date_of_birth), styles["value"]),
         ],
         [
-            _p("Programme", styles["label"]),
-            _p(application.program, styles["value"]),
-            _p("Examination year", styles["label"]),
-            _p(application.exam_year, styles["value"]),
+            _p("Father's name", styles["label"]),
+            _p(application.father_name, styles["value"]),
+            _p("Mother / guardian", styles["label"]),
+            _p(application.mother_name, styles["value"]),
         ],
         [
-            _p("Board", styles["label"]),
-            _p(application.board or "Not stated", styles["value"]),
+            _p("Phone", styles["label"]),
+            _p(application.phone, styles["value"]),
+            _p("Orphan", styles["label"]),
+            _p(_yes_no(application.is_orphan), styles["value"]),
+        ],
+        [
+            _p("First graduate", styles["label"]),
+            _p(_yes_no(application.is_first_graduate), styles["value"]),
             _p("Application status", styles["label"]),
             _p(_status_label(application.status), styles["value"]),
+        ],
+        [
+            _p("Address", styles["label"]),
+            _p(application.address, styles["body"]),
+            "",
+            "",
         ],
         [
             _p("Checked", styles["label"]),
@@ -399,6 +432,7 @@ def _identity_block(application, run, styles):
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("SPAN", (1, 4), (3, 4)),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 8),
                 ("TOPPADDING", (0, 0), (-1, -1), 4),
@@ -407,6 +441,83 @@ def _identity_block(application, run, styles):
             ]
         )
     )
+    return table
+
+
+def _education_block(application, styles):
+    records = {record.class_level: record for record in application.classes}
+    rows = [
+        [
+            _p("Class", styles["th"]),
+            _p("Register no.", styles["th"]),
+            _p("Exam year", styles["th_r"]),
+            _p("Board", styles["th"]),
+            _p("Subjects", styles["th_r"]),
+        ]
+    ]
+    for level in (10, 11, 12):
+        record = records.get(level)
+        if record is None:
+            rows.append(
+                [
+                    _p(f"Class {level}", styles["td_bold"]),
+                    _p("Not provided", styles["td"]),
+                    _p("—", styles["td_r"]),
+                    _p("—", styles["td"]),
+                    _p("—", styles["td_r"]),
+                ]
+            )
+            continue
+        rows.append(
+            [
+                _p(f"Class {level}", styles["td_bold"]),
+                _p(record.register_number, styles["td"]),
+                _p(record.exam_year, styles["td_r"]),
+                _p(record.board or "Not stated", styles["td"]),
+                _p(len(record.marks), styles["td_r"]),
+            ]
+        )
+    table = Table(rows, colWidths=[72, 122, 54, 170, 85], hAlign="LEFT")
+    table.setStyle(_table_style())
+    return table
+
+
+def _education_marks_block(application, styles):
+    records = {record.class_level: record for record in application.classes}
+    rows = [
+        [
+            _p("Class", styles["th"]),
+            _p("Subject", styles["th"]),
+            _p("Entered", styles["th_r"]),
+            _p("Out of", styles["th_r"]),
+            _p("Grade", styles["th"]),
+        ]
+    ]
+    for level in (10, 11, 12):
+        record = records.get(level)
+        if record is None:
+            rows.append(
+                [
+                    _p(f"Class {level}", styles["td_bold"]),
+                    _p("Not provided", styles["td"]),
+                    _p("—", styles["td_r"]),
+                    _p("—", styles["td_r"]),
+                    _p("—", styles["td"]),
+                ]
+            )
+            continue
+        for mark in record.marks:
+            rows.append(
+                [
+                    _p(f"Class {level}", styles["td"]),
+                    _p(mark.subject, styles["td_bold"]),
+                    _p(mark.marks_obtained, styles["td_r"]),
+                    _p(mark.max_marks if mark.max_marks is not None else "—", styles["td_r"]),
+                    _p(mark.grade or "—", styles["td"]),
+                ]
+            )
+    table = Table(rows, colWidths=[58, 205, 62, 62, 116], repeatRows=1)
+    table.setStyle(_table_style(zebra=True, row_count=len(rows)))
     return table
 
 
@@ -501,7 +612,7 @@ def _photo_block(run, styles):
 
 
 def _other_findings(run, styles):
-    known = {"mark", "identity", "photo"}
+    known = {"mark", "identity", "photo", "consistency"}
     findings = [finding for finding in run.findings if finding.category not in known]
     if not findings:
         return None
@@ -541,7 +652,9 @@ def _documents_block(application, styles):
         ]
     ]
     for document in documents:
-        kind = document.kind.replace("_", " ").title()
+        kind = document.kind_label
+        if document.masked_aadhaar:
+            kind = f"{kind} · {document.masked_aadhaar}"
         if document.duplicate_of_id:
             kind = f"{kind} · duplicate"
         rows.append(
@@ -556,6 +669,215 @@ def _documents_block(application, styles):
     table = Table(rows, colWidths=[92, 235, 56, 38, 82], repeatRows=1)
     table.setStyle(_table_style())
     return [table]
+
+
+def _document_summaries(run) -> list[dict]:
+    return list((run.summary or {}).get("documents") or [])
+
+
+def _classification_note(classification) -> str | None:
+    if not isinstance(classification, dict):
+        return None
+    method = classification.get("method")
+    if method == "override":
+        return "Type chosen by the applicant"
+    if method:
+        return "Type detected from the content"
+    return None
+
+
+def _document_verdicts_block(run, styles) -> list:
+    documents = _document_summaries(run)
+    if not documents:
+        return []
+    rows = [
+        [
+            _p("Document", styles["th"]),
+            _p("Result", styles["th"]),
+            _p("Details", styles["th"]),
+        ]
+    ]
+    for document in documents:
+        details = [
+            _count_word(document.get("findings", 0), "check"),
+            f"{document.get('critical', 0)} critical",
+            f"{document.get('warnings', 0)} warning"
+            + ("" if document.get("warnings") == 1 else "s"),
+        ]
+        if document.get("masked_aadhaar"):
+            details.append(str(document["masked_aadhaar"]))
+        note = _classification_note(document.get("classification"))
+        if note:
+            details.append(note)
+        rows.append(
+            [
+                Paragraph(
+                    f"<b>{escape(str(document.get('label') or 'Document'))}</b><br/>"
+                    f'<font color="{MUTED.hexval()}" size="6.8">'
+                    f"{escape(str(document.get('filename') or ''))}</font>",
+                    styles["td"],
+                ),
+                _result_para(str(document.get("status") or "pending"), styles["td"]),
+                _p(" · ".join(details), styles["td"]),
+            ]
+        )
+    table = Table(rows, colWidths=[184, 58, 261], repeatRows=1)
+    table.setStyle(_table_style())
+    return [
+        Spacer(1, 2),
+        *_section("Document verdicts", styles, min_height=90),
+        table,
+        Spacer(1, 14),
+    ]
+
+
+def _count_word(value: int, noun: str) -> str:
+    return f"{value} {noun}{'' if value == 1 else 's'}"
+
+
+def _finding_details(finding) -> str:
+    parts: list[str] = []
+    if finding.entered_value:
+        parts.append(f"Entered {finding.entered_value}")
+    if finding.uploaded_value:
+        parts.append(f"Read {finding.uploaded_value}")
+    if finding.measured_value and finding.measured_value != finding.uploaded_value:
+        parts.append(f"Measured {finding.measured_value}")
+    if finding.required_value:
+        parts.append(f"Required {finding.required_value}")
+    detail = finding.detail or ""
+    if parts:
+        detail = f"{detail} ({' · '.join(parts)})".strip()
+    return detail or "—"
+
+
+def _validation_table(findings, styles) -> Table:
+    rows = [
+        [
+            _p("Validation", styles["th"]),
+            _p("Result", styles["th"]),
+            _p("Details", styles["th"]),
+        ]
+    ]
+    for finding in findings:
+        rows.append(
+            [
+                _p(finding.field, styles["td_bold"]),
+                _result_para(finding.result, styles["td"]),
+                _p(_finding_details(finding), styles["td"]),
+            ]
+        )
+    table = Table(rows, colWidths=[146, 58, 299], repeatRows=1)
+    table.setStyle(_table_style())
+    return table
+
+
+def _document_sections(run, styles) -> list:
+    documents = _document_summaries(run)
+    if not documents:
+        return []
+    groups: dict[str, list[dict]] = {}
+    for document in documents:
+        groups.setdefault(str(document.get("kind") or "other"), []).append(document)
+
+    story: list = _section("Validation by document", styles, min_height=150)
+    for items in groups.values():
+        label = str(items[0].get("label") or "Document")
+        if len(items) > 1:
+            label = f"{label} · {len(items)} files"
+        story.append(CondPageBreak(150))
+        story.append(_p(label, styles["h3"]))
+        files = []
+        for item in items:
+            line = str(item.get("filename") or "")
+            if item.get("masked_aadhaar"):
+                line = f"{line} · {item['masked_aadhaar']}"
+            note = _classification_note(item.get("classification"))
+            if note:
+                line = f"{line} · {note.lower()}"
+            files.append(line)
+        story.append(_p(" · ".join(files), styles["small"]))
+        story.append(Spacer(1, 5))
+
+        ids = {item.get("id") for item in items}
+        findings = [
+            finding
+            for finding in run.findings
+            if (finding.meta or {}).get("document_id") in ids
+        ]
+        if findings:
+            story.append(_validation_table(findings, styles))
+        else:
+            story.append(_p("No checks were recorded for this document.", styles["body"]))
+        story.append(Spacer(1, 13))
+    return story
+
+
+def _consistency_block(run, styles) -> list:
+    findings = [
+        finding for finding in run.findings if finding.category == "consistency"
+    ]
+    if not findings:
+        return []
+    return [
+        *_section("Consistency checks", styles),
+        _validation_table(findings, styles),
+        Spacer(1, 15),
+    ]
+
+
+def _matrix_values(values: list[dict], styles, *, empty: str) -> Paragraph:
+    if not values:
+        return _p(empty, styles["small"])
+    lines = []
+    for value in values:
+        source = escape(str(value.get("source") or ""))
+        text = escape(str(value.get("value") or "—"))
+        lines.append(
+            f'{text}<br/><font color="{MUTED.hexval()}" size="6.5">{source}</font>'
+        )
+    return Paragraph("<br/>".join(lines), styles["td"])
+
+
+def _identity_matrix_block(run, styles) -> list:
+    matrix = (run.summary or {}).get("identity_matrix") or {}
+    fields = [field for field in matrix.get("fields", []) if field.get("values")]
+    if not fields:
+        return []
+    rows = [
+        [
+            _p("Field", styles["th"]),
+            _p("Application", styles["th"]),
+            _p("Documents read", styles["th"]),
+            _p("Result", styles["th"]),
+        ]
+    ]
+    for field in fields:
+        values = field.get("values") or []
+        application_value = next(
+            (value for value in values if value.get("kind") == "application"), None
+        )
+        documents = [value for value in values if value.get("kind") != "application"]
+        rows.append(
+            [
+                Paragraph(
+                    f"<b>{escape(str(field.get('label') or field.get('field') or ''))}</b><br/>"
+                    f'<font color="{MUTED.hexval()}" size="6.5">'
+                    f"{escape(str(field.get('detail') or ''))}</font>",
+                    styles["td"],
+                ),
+                _p(application_value.get("value") if application_value else "—", styles["td"]),
+                _matrix_values(documents, styles, empty="Not printed on any document"),
+                _result_para(str(field.get("status") or "not_available"), styles["td"]),
+            ]
+        )
+    table = Table(rows, colWidths=[116, 104, 225, 58], repeatRows=1)
+    table.setStyle(_table_style())
+    return [
+        *_section("Identity consistency matrix", styles),
+        table,
+        Spacer(1, 15),
+    ]
 
 
 def _section(title: str, styles, min_height: float = 118) -> list:
@@ -628,15 +950,37 @@ def build_validation_report(application, run) -> bytes:
     story: list = []
     story += _page_drawing(application, run, styles)
     story += _summary_block(application, run, styles)
+    story += _document_verdicts_block(run, styles)
     story += _section("Applicant and filing", styles)
     story += [_identity_block(application, run, styles), Spacer(1, 15)]
+    story += _section("Education", styles)
+    story += [
+        _education_block(application, styles),
+        Spacer(1, 8),
+        _p("Entered marks by class", styles["label"]),
+        Spacer(1, 4),
+        _education_marks_block(application, styles),
+        Spacer(1, 15),
+    ]
     story += _section("Mark verification", styles)
+    story += [
+        _p(
+            "Each uploaded mark sheet is compared with its class record on the application.",
+            styles["small"],
+        ),
+        Spacer(1, 6),
+    ]
     story += _marks_block(application, run, styles)
     story += [Spacer(1, 15)]
+    story += _document_sections(run, styles)
     story += _section("Identity checks", styles)
     identity = _identity_checks_block(run, styles)
     story += identity if identity else [_p("No identity checks were recorded.", styles["body"])]
     story += [Spacer(1, 15)]
+    matrix = _identity_matrix_block(run, styles)
+    if matrix:
+        story += matrix
+    story += _consistency_block(run, styles)
     story += _section("Documents on file", styles)
     story += _documents_block(application, styles)
     other = _other_findings(run, styles)

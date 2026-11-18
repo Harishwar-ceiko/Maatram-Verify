@@ -59,14 +59,14 @@ function QueueRow({ item }: { item: ReviewQueueItem }) {
         </Link>
         <span className="mt-0.5 block text-[11.5px] text-muted">{item.applicant_name}</span>
         <span className="mt-0.5 block max-w-[34ch] truncate text-[10.5px] text-muted">
-          {item.program}
+          Class 12 · {item.class_12_year ?? "—"}
         </span>
       </td>
       <td className="max-w-[300px] align-top">
         {item.reasons.length > 0 ? (
           <ul className="grid gap-1">
-            {item.reasons.slice(0, 2).map((reason) => (
-              <li key={reason} className="flex items-start gap-2 text-[11.5px] leading-snug text-ink-soft">
+            {item.reasons.slice(0, 2).map((reason, index) => (
+              <li key={`${index}-${reason}`} className="flex items-start gap-2 text-[11.5px] leading-snug text-ink-soft">
                 <span
                   className="mt-[5px] h-[5px] w-[5px] flex-none rounded-[1px] bg-accent"
                   aria-hidden="true"
@@ -154,13 +154,13 @@ function QueueCard({ item }: { item: ReviewQueueItem }) {
           {item.reference}
         </Link>
         <p className="mt-0.5 text-[12px] text-muted">{item.applicant_name}</p>
-        <p className="mt-0.5 text-[11px] text-muted">{item.program}</p>
+        <p className="mt-0.5 text-[11px] text-muted">Class 12 · {item.class_12_year ?? "—"}</p>
       </div>
       {item.reasons.length > 0 ? (
         <ul className="grid gap-1.5">
-          {item.reasons.slice(0, 3).map((reason) => (
+          {item.reasons.slice(0, 3).map((reason, index) => (
             <li
-              key={reason}
+              key={`${index}-${reason}`}
               className="flex items-start gap-2 text-[11.5px] leading-snug text-ink-soft"
             >
               <span

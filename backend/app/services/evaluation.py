@@ -16,12 +16,24 @@ from typing import Any
 from app.core.config import REPORTS_DIR, SYNTHETIC_DIR, rules
 from app.db.session import get_session_factory
 from app.models.accuracy import AccuracyRun
+from app.ocr.classify import classify_text
 from app.ocr.extract import extract_document
 from app.ocr.types import SubjectRow
 from app.services.comparison import EnteredMarkValue, compare_marks
 from app.services.subjects import clean, normalize_subject
 from app.services.synthetic import ensure_dataset
 from app.validators.photo import analyze_photo
+
+KIND_ORDER = (
+    "marksheet_10",
+    "marksheet_11",
+    "marksheet_12",
+    "aadhaar",
+    "income_certificate",
+    "community_certificate",
+    "first_graduate_certificate",
+    "photo",
+)
 
 
 def _text(value: Any) -> str:
@@ -84,6 +96,235 @@ def _detected_results(result) -> tuple[set[str], set[str]]:
         if check.result == "missing_upload"
     }
     return mismatched, missing
+
+
+def _kind_label(kind: str) -> str:
+    kinds = rules()["documents"]["kinds"]
+    return str((kinds.get(kind) or {}).get("label") or kind.replace("_", " ").title())
+
+
+def _kind_short(kind: str) -> str:
+    kinds = rules()["documents"]["kinds"]
+    return str((kinds.get(kind) or {}).get("short") or kind.replace("_", " ").title())
+
+
+def _document_actual(extraction) -> dict[str, Any]:
+    attributes = extraction.attributes or {}
+    masked = str(attributes.get("aadhaar_number") or "")
+    return {
+        "name": extraction.name.value,
+        "aadhaar_last4": masked[-4:] if masked else None,
+        "birth_detail": attributes.get("birth_detail"),
+        "checksum_valid": attributes.get("checksum_valid"),
+        "gender": attributes.get("gender"),
+        "certificate_number": attributes.get("certificate_number"),
+        "issue_date": attributes.get("issue_date"),
+        "annual_income": attributes.get("annual_income"),
+        "community": attributes.get("community"),
+        "first_graduate": attributes.get("first_graduate"),
+    }
+
+
+def _field_matches(field: str, expected: Any, actual: Any) -> bool:
+    if isinstance(expected, bool):
+        return actual is expected
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        if actual is None:
+            return False
+        try:
+            return abs(float(actual) - float(expected)) < 1e-9
+        except (TypeError, ValueError):
+            return False
+    if field == "certificate_number":
+        return _identifier(actual) == _identifier(expected)
+    return _text(actual) == _text(expected)
+
+
+def _confusion(entries: list[tuple[str, str]]) -> dict[str, Any]:
+    """Build a document-type confusion matrix from (expected, predicted) pairs."""
+
+    present: list[str] = []
+    for kind in KIND_ORDER:
+        if any(kind in pair for pair in entries):
+            present.append(kind)
+    for expected, predicted in entries:
+        for kind in (expected, predicted):
+            if kind not in present:
+                present.append(kind)
+    index = {kind: position for position, kind in enumerate(present)}
+    matrix = [[0 for _ in present] for _ in present]
+    for expected, predicted in entries:
+        matrix[index[expected]][index[predicted]] += 1
+    correct = sum(matrix[position][position] for position in range(len(present)))
+    by_expected = []
+    for position, kind in enumerate(present):
+        total = sum(matrix[position])
+        hits = matrix[position][position]
+        by_expected.append(
+            {
+                "kind": kind,
+                "label": _kind_label(kind),
+                "short": _kind_short(kind),
+                "correct": hits,
+                "total": total,
+                "accuracy": _ratio(hits, total),
+            }
+        )
+    return {
+        "labels": [
+            {"kind": kind, "label": _kind_label(kind), "short": _kind_short(kind)}
+            for kind in present
+        ],
+        "matrix": matrix,
+        "correct": correct,
+        "total": len(entries),
+        "accuracy": _ratio(correct, len(entries)),
+        "by_expected": by_expected,
+    }
+
+
+def _score_documents(dataset: dict[str, Any]) -> dict[str, Any]:
+    fixtures = dataset.get("documents") or []
+    rows: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    stats: dict[str, dict[str, int]] = {}
+    classification_entries: list[tuple[str, str]] = []
+    checksum_tested = checksum_correct = 0
+    fields_total = fields_correct = 0
+
+    for fixture in fixtures:
+        kind = fixture["kind"]
+        bucket = stats.setdefault(
+            kind,
+            {
+                "fixtures": 0,
+                "fields_total": 0,
+                "fields_correct": 0,
+            },
+        )
+        bucket["fixtures"] += 1
+        row = {
+            "id": fixture["id"],
+            "kind": kind,
+            "label": _kind_label(kind),
+            "variant": fixture.get("variant"),
+            "note": fixture.get("note"),
+            "classification_expected": kind,
+            "classification": None,
+            "classified": False,
+            "fields": {},
+            "field_total": 0,
+            "field_correct": 0,
+            "checksum_expected": None,
+            "checksum_actual": None,
+            "error": None,
+        }
+        try:
+            raw = (SYNTHETIC_DIR / fixture["file"]).read_bytes()
+            extraction = extract_document(raw, fixture["mime"], kind=kind)
+        except Exception as exc:  # noqa: BLE001 - report, do not abort the run
+            message = f"{type(exc).__name__}: {exc}"
+            row["error"] = message
+            errors.append(
+                {
+                    "case": fixture["id"],
+                    "variant": fixture.get("variant") or "document",
+                    "error": message,
+                }
+            )
+            rows.append(row)
+            continue
+
+        classification = classify_text(extraction.raw_text)
+        predicted = (classification or {}).get("kind") or "other"
+        row["classification"] = predicted
+        row["classified"] = predicted == kind
+        classification_entries.append((kind, predicted))
+
+        actual = _document_actual(extraction)
+        for field, expected in fixture["expected"].items():
+            read = actual.get(field)
+            correct = _field_matches(field, expected, read)
+            if field == "checksum_valid":
+                checksum_tested += 1
+                checksum_correct += int(correct)
+                row["checksum_expected"] = bool(expected)
+                row["checksum_actual"] = read
+            fields_total += 1
+            bucket["fields_total"] += 1
+            row["field_total"] += 1
+            fields_correct += int(correct)
+            bucket["fields_correct"] += int(correct)
+            row["field_correct"] += int(correct)
+            row["fields"][field] = {
+                "expected": expected,
+                "actual": read,
+                "correct": correct,
+            }
+
+        if row["field_correct"] < row["field_total"] or not row["classified"]:
+            wrong = [
+                f"{field}: expected {value['expected']}, read {value['actual']}"
+                for field, value in row["fields"].items()
+                if not value["correct"]
+            ]
+            if not row["classified"]:
+                wrong.append(f"type: expected {kind}, read {predicted}")
+            errors.append(
+                {
+                    "case": fixture["id"],
+                    "variant": fixture.get("variant") or "document",
+                    "error": "document mismatch",
+                    "wrong": wrong,
+                }
+            )
+        rows.append(row)
+
+    by_kind = []
+    for kind in KIND_ORDER + tuple(sorted(set(stats) - set(KIND_ORDER))):
+        bucket = stats.get(kind)
+        if not bucket:
+            continue
+        by_kind.append(
+            {
+                "kind": kind,
+                "label": _kind_label(kind),
+                "short": _kind_short(kind),
+                "fixtures": bucket["fixtures"],
+                "fields_total": bucket["fields_total"],
+                "fields_correct": bucket["fields_correct"],
+                "field_accuracy": _ratio(
+                    bucket["fields_correct"], bucket["fields_total"]
+                ),
+                "classification_accuracy": _ratio(
+                    sum(
+                        1
+                        for expected, predicted in classification_entries
+                        if expected == kind and predicted == kind
+                    ),
+                    bucket["fixtures"],
+                ),
+            }
+        )
+
+    return {
+        "fixtures": len(rows),
+        "fields_total": fields_total,
+        "fields_correct": fields_correct,
+        "field_accuracy": _ratio(fields_correct, fields_total),
+        "classification_accuracy": _ratio(
+            sum(1 for expected, predicted in classification_entries if expected == predicted),
+            len(classification_entries),
+        ),
+        "checksum": {
+            "tested": checksum_tested,
+            "correct": checksum_correct,
+            "accuracy": _ratio(checksum_correct, checksum_tested),
+        },
+        "by_kind": by_kind,
+        "cases": rows,
+        "errors": errors,
+    }
 
 
 def _score_photos(dataset: dict[str, Any]) -> dict[str, Any]:
@@ -170,6 +411,8 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
     cases = dataset["cases"]
     case_rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    classification_entries: list[tuple[str, str]] = []
+    class_counts = {"10": 0, "11": 0, "12": 0}
 
     name_ok = register_ok = year_ok = 0
     subjects_found = marks_exact = rows_exact = max_exact = 0
@@ -187,6 +430,11 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
     for case in cases:
         variant = case["variant"]
+        kind = case.get("kind") or (
+            "marksheet_11" if int(case.get("class_level") or 12) == 11 else "marksheet_12"
+        )
+        class_level = int(case.get("class_level") or (11 if kind == "marksheet_11" else 12))
+        class_counts[str(class_level)] = class_counts.get(str(class_level), 0) + 1
         stats = variant_stats.setdefault(
             variant,
             {
@@ -217,11 +465,15 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
         row = {
             "id": case["id"],
+            "kind": kind,
+            "class_level": class_level,
             "variant": variant,
             "expected_mismatches": sorted(expected_mismatches),
             "detected_mismatches": [],
             "expected_missing": sorted(expected_missing),
             "detected_missing": [],
+            "classification": None,
+            "classified": False,
             "name_ok": False,
             "register_ok": False,
             "year_ok": False,
@@ -236,13 +488,20 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
         try:
             raw = (SYNTHETIC_DIR / case["sheet"]).read_bytes()
-            extraction = extract_document(raw, case["mime"])
+            extraction = extract_document(raw, case["mime"], kind=kind)
         except Exception as exc:  # noqa: BLE001 - report, do not abort the run
             message = f"{type(exc).__name__}: {exc}"
             row["error"] = message
+            classification_entries.append((kind, "other"))
             errors.append({"case": case["id"], "variant": variant, "error": message})
             case_rows.append(row)
             continue
+
+        classification = classify_text(extraction.raw_text)
+        predicted = (classification or {}).get("kind") or "other"
+        row["classification"] = predicted
+        row["classified"] = predicted == kind
+        classification_entries.append((kind, predicted))
 
         duration_values.append(extraction.duration_ms)
         name_match = _text(extraction.name.value) == _text(case["applicant_name"])
@@ -349,6 +608,13 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
     engine_metrics = _prf(engine_tp, engine_fp, engine_fn)
     missing_metrics = _prf(missing_tp, missing_fp, missing_fn)
     photo = _score_photos(dataset)
+    documents = _score_documents(dataset)
+    classification_entries.extend(
+        (row["classification_expected"], row["classification"] or "other")
+        for row in documents["cases"]
+    )
+    classification = _confusion(classification_entries)
+    errors.extend(documents["errors"])
 
     variant_rows = []
     for variant, stats in variant_stats.items():
@@ -373,6 +639,7 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
         "field_accuracy": float(config["min_field_accuracy"]),
         "mismatch_recall": float(config["min_mismatch_recall"]),
         "photo_rule_accuracy": float(config["min_photo_accuracy"]),
+        "document_field_accuracy": float(config["min_document_field_accuracy"]),
     }
     target_checks = {
         "field_accuracy": {
@@ -390,12 +657,23 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
             "target": targets["photo_rule_accuracy"],
             "met": photo["rule_accuracy"] >= targets["photo_rule_accuracy"],
         },
+        "document_field_accuracy": {
+            "value": documents["field_accuracy"],
+            "target": targets["document_field_accuracy"],
+            "met": documents["field_accuracy"] >= targets["document_field_accuracy"],
+        },
     }
 
     summary = {
         "status": "completed",
         "dataset": dataset["dataset"],
         "cases": total,
+        "mark_sheets": {
+            "total": total,
+            "class_10": class_counts.get("10", 0),
+            "class_11": class_counts.get("11", 0),
+            "class_12": class_counts.get("12", 0),
+        },
         "field_accuracy": field_accuracy,
         "fields": {
             "name": _ratio(name_ok, total),
@@ -440,6 +718,9 @@ def evaluate_dataset(dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
         "ocr_confidence": round(statistics.mean(confidence_values), 1) if confidence_values else 0.0,
         "mean_duration_ms": int(statistics.mean(duration_values)) if duration_values else 0,
         "photos": photo,
+        "documents": documents,
+        "classification": classification,
+        "counts": dataset.get("counts"),
         "variants": variant_rows,
         "targets": target_checks,
         "cases_detail": case_rows,
@@ -457,7 +738,9 @@ def _markdown(summary: dict[str, Any]) -> str:
     lines = [
         "# Accuracy evaluation",
         "",
-        f"Dataset **{summary['dataset']}** · {summary['cases']} synthetic mark sheets · "
+        f"Dataset **{summary['dataset']}** · {summary['cases']} synthetic mark sheets "
+        f"(Class 12 {summary['mark_sheets']['class_12']}, Class 11 {summary['mark_sheets']['class_11']}) · "
+        f"{summary['documents']['fixtures']} supporting documents · "
         f"{summary['photos']['fixtures']} labelled photo fixtures.",
         "",
         "Deterministic pipeline: Tesseract OCR, rule-based comparison and measured photo rules. "
@@ -470,6 +753,7 @@ def _markdown(summary: dict[str, Any]) -> str:
     ]
     labels = {
         "field_accuracy": "Field extraction (name, register, year)",
+        "document_field_accuracy": "Supporting document fields",
         "mismatch_recall": "Mismatch detection recall",
         "photo_rule_accuracy": "Photo rule accuracy",
     }
@@ -511,6 +795,45 @@ def _markdown(summary: dict[str, Any]) -> str:
         )
     lines += [
         "",
+        "## Supporting documents",
+        "",
+        f"Fields read exactly: **{summary['documents']['fields_correct']}/"
+        f"{summary['documents']['fields_total']}** · Aadhaar checksum: "
+        f"**{summary['documents']['checksum']['correct']}/"
+        f"{summary['documents']['checksum']['tested']}** correct.",
+        "",
+        "| Document | Fixtures | Fields correct | Accuracy | Classified |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for row in summary["documents"]["by_kind"]:
+        lines.append(
+            f"| {row['label']} | {row['fixtures']} | {row['fields_correct']}/"
+            f"{row['fields_total']} | {_percent(row['field_accuracy'])} | "
+            f"{_percent(row['classification_accuracy'])} |"
+        )
+    classification = summary["classification"]
+    lines += [
+        "",
+        "## Document type confusion",
+        "",
+        "Rows are the printed document type; columns are the deterministic keyword classifier.",
+        "",
+        "| Printed \\ read as | "
+        + " | ".join(label["short"] for label in classification["labels"])
+        + " |",
+        "| --- | " + " | ".join("---:" for _ in classification["labels"]) + " |",
+    ]
+    for label, matrix_row in zip(classification["labels"], classification["matrix"]):
+        lines.append(
+            f"| {label['label']} | "
+            + " | ".join(str(count) for count in matrix_row)
+            + " |"
+        )
+    lines += [
+        "",
+        f"Classified correctly: **{classification['correct']}/{classification['total']}** "
+        f"({_percent(classification['accuracy'])}).",
+        "",
         "## Photo rules",
         "",
         f"Labelled rule outcomes: **{summary['photos']['labels_correct']}/"
@@ -534,7 +857,10 @@ def _markdown(summary: dict[str, Any]) -> str:
         "## Method",
         "",
         "- Mark sheets are generated from a fixed seed with fictional identities and known marks.",
+        "- Class 12 and Class 11 statements share the same table layout but print their class explicitly.",
         "- Variants add grain, blur, a slight tilt, uneven light and JPEG compression.",
+        "- Supporting documents include synthetic Aadhaar cards (Verhoeff-valid and invalid) and "
+        "income, community and first-graduate certificates with known printed values.",
         "- Mismatch labels come from the generated entry, never from the OCR output.",
         "- Photo expectations are set by the controlled perturbation; every rule is measured "
         "against the same thresholds used in production.",

@@ -15,11 +15,15 @@ from app.models.application import Application
 from app.models.document import Document
 from app.models.enums import DocumentKind, Role
 from app.models.user import User
+from app.ocr.classify import classify_document
+from app.ocr.types import OcrUnavailable
 from app.schemas.application import DocumentOut, UploadResult
 from app.services import storage
 from app.services.audit import write_audit
 
 router = APIRouter(prefix="/api", tags=["documents"])
+
+SUPPORTED_KINDS_TEXT = ", ".join(sorted(DocumentKind.supported()))
 
 
 def _document_or_404(db: Session, document_id: int, user: User) -> tuple[Document, Application]:
@@ -42,35 +46,105 @@ def _document_or_404(db: Session, document_id: int, user: User) -> tuple[Documen
 async def upload_document(
     application_id: int,
     request: Request,
-    kind: str = Form(...),
+    kind: str = Form("auto"),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> UploadResult:
     application = get_application_for_user(application_id, db, user)
-    if kind not in (DocumentKind.marksheet.value, DocumentKind.photo.value):
-        raise HTTPException(status_code=422, detail="kind must be marksheet or photo.")
-
     config = rules()
+    requested = (kind or "auto").strip().lower()
     cap = min(get_settings().max_upload_mb, config["uploads"]["max_mb"]) * 1024 * 1024
     data = await file.read(cap + 1)
     if len(data) > cap:
         raise HTTPException(status_code=413, detail=f"File is larger than {cap // (1024 * 1024)} MB.")
     try:
-        fmt, pages, size = storage.validate_upload(data, kind)
+        fmt, pages, size = storage.validate_upload(data, "document")
     except storage.UploadError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    warnings: list[str] = []
+    if requested == "auto":
+        try:
+            classification = classify_document(data, storage.MIME[fmt])
+        except OcrUnavailable as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="The document could not be read automatically. Choose its type explicitly.",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - upload must not fail with a stack trace
+            raise HTTPException(
+                status_code=422,
+                detail="The document could not be classified. Choose its type explicitly.",
+            ) from exc
+        if classification is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The document type could not be identified from its content. "
+                    f"Choose one of: {SUPPORTED_KINDS_TEXT}."
+                ),
+            )
+        resolved = str(classification.get("kind") or "")
+        if resolved not in DocumentKind.supported():
+            raise HTTPException(
+                status_code=422,
+                detail="The detected document type is not supported. Choose the type explicitly.",
+            )
+        classification = {
+            **classification,
+            "kind": resolved,
+            "requested": "auto",
+        }
+        if resolved == "photo" and fmt == "pdf":
+            raise HTTPException(
+                status_code=422,
+                detail="A profile photo must be a JPEG or PNG, not a PDF.",
+            )
+        note = classification.get("note")
+        if note:
+            warnings.append(str(note))
+        elif classification.get("ambiguous"):
+            warnings.append(
+                "The content matched more than one document type. Confirm the type "
+                "before running the checks."
+            )
+    else:
+        resolved = DocumentKind.normalise(requested)
+        if resolved is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"kind must be auto or one of: {SUPPORTED_KINDS_TEXT}.",
+            )
+        try:
+            storage.validate_upload(data, resolved)
+        except storage.UploadError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        classification = {
+            "method": "override",
+            "kind": resolved,
+            "requested": requested,
+            "confidence": 100.0,
+        }
+        if requested != resolved:
+            classification["legacy_alias"] = True
+
+    slot = str(
+        config.get("documents", {})
+        .get("kinds", {})
+        .get(resolved, {})
+        .get("slot", "single")
+    )
     digest = storage.checksum(data)
     phash, width, height = storage.phash_bytes(data, fmt)
 
     replaced: list[Document] = []
-    if kind == DocumentKind.photo.value:
+    if slot == "single":
         replaced = list(
             db.scalars(
                 select(Document).where(
                     Document.application_id == application.id,
-                    Document.kind == DocumentKind.photo.value,
+                    Document.kind == resolved,
                 )
             )
         )
@@ -106,11 +180,13 @@ async def upload_document(
             None,
         )
 
+    safe_name = storage.safe_filename(file.filename or f"{resolved}.{fmt}")
     stored_name, _path = storage.store_bytes(application.id, data)
     document = Document(
         application_id=application.id,
-        kind=kind,
-        original_filename=storage.sanitize_filename(file.filename or f"{kind}.{fmt}"),
+        kind=resolved,
+        classification=classification,
+        original_filename=safe_name,
         stored_name=stored_name,
         mime_type=storage.MIME[fmt],
         size_bytes=size,
@@ -126,7 +202,6 @@ async def upload_document(
     db.add(document)
     db.flush()
 
-    warnings: list[str] = []
     if exact is not None:
         warnings.append(
             f"This is byte-for-byte the same file as {exact.original_filename}. "
@@ -149,7 +224,7 @@ async def upload_document(
             application_id=application.id,
             actor_id=user.id,
             actor_email=user.email,
-            detail={"filename": old.original_filename, "kind": kind},
+            detail={"filename": old.original_filename, "kind": resolved},
             request=request,
         )
 
@@ -163,7 +238,14 @@ async def upload_document(
         actor_email=user.email,
         detail={
             "filename": document.original_filename,
-            "kind": kind,
+            "kind": resolved,
+            "requested_kind": requested,
+            "classification": {
+                "method": classification.get("method"),
+                "score": classification.get("score"),
+                "confidence": classification.get("confidence"),
+                "ambiguous": classification.get("ambiguous", False),
+            },
             "bytes": size,
             "sha256": digest[:12],
             "duplicate_of": document.duplicate_of_id,
@@ -239,6 +321,9 @@ def document_meta(
         "id": document.id,
         "filename": document.original_filename,
         "kind": document.kind,
+        "kind_label": document.kind_label,
+        "classification": document.classification,
+        "masked_aadhaar": document.masked_aadhaar,
         "mime_type": document.mime_type,
         "size_bytes": document.size_bytes,
         "page_count": document.page_count,

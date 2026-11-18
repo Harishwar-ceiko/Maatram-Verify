@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -27,26 +29,24 @@ class EnteredMarkIn(BaseModel):
         return value
 
 
-class ApplicationCreate(BaseModel):
-    program: str = Field(min_length=2, max_length=160)
-    applicant_name: str = Field(min_length=2, max_length=160)
+class EducationRecordIn(BaseModel):
     register_number: str = Field(min_length=2, max_length=64)
     exam_year: int = Field(ge=1990, le=2100)
     board: str = Field(default="", max_length=160)
     marks: list[EnteredMarkIn] = Field(min_length=1, max_length=30)
 
-    @field_validator("program", "applicant_name", "register_number")
-    @classmethod
-    def tidy(cls, value: str) -> str:
-        cleaned = " ".join(value.split())
-        if not cleaned:
-            raise ValueError("this field is required")
-        return cleaned
-
     @field_validator("register_number")
     @classmethod
-    def upper_register(cls, value: str) -> str:
-        return value.upper()
+    def tidy_register(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("register number is required")
+        return cleaned.upper()
+
+    @field_validator("board")
+    @classmethod
+    def tidy_board(cls, value: str) -> str:
+        return " ".join(value.split())
 
     @field_validator("marks")
     @classmethod
@@ -54,6 +54,54 @@ class ApplicationCreate(BaseModel):
         seen = {mark.subject.strip().lower() for mark in value}
         if len(seen) != len(value):
             raise ValueError("a subject is entered twice")
+        return value
+
+
+class ApplicationCreate(BaseModel):
+    applicant_name: str = Field(min_length=2, max_length=160)
+    date_of_birth: date
+    father_name: str = Field(min_length=2, max_length=160)
+    mother_name: str = Field(min_length=2, max_length=160)
+    phone: str = Field(min_length=6, max_length=24)
+    address: str = Field(min_length=5, max_length=500)
+    is_orphan: bool = False
+    is_first_graduate: bool = False
+    class_10: EducationRecordIn
+    class_11: EducationRecordIn | None = None
+    class_12: EducationRecordIn
+
+    @field_validator("applicant_name", "father_name", "mother_name")
+    @classmethod
+    def tidy_name(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if len(cleaned) < 2:
+            raise ValueError("this field is required")
+        return cleaned
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        digits = re.sub(r"\D", "", cleaned)
+        if not 7 <= len(digits) <= 15:
+            raise ValueError("enter a phone number with 7 to 15 digits")
+        return cleaned
+
+    @field_validator("address")
+    @classmethod
+    def tidy_address(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if len(cleaned) < 5:
+            raise ValueError("enter the full postal address")
+        return cleaned
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def sensible_birth_date(cls, value: date) -> date:
+        if value > date.today():
+            raise ValueError("date of birth cannot be in the future")
+        if value.year < 1900:
+            raise ValueError("enter a valid date of birth")
         return value
 
 
@@ -67,11 +115,28 @@ class MarkOut(BaseModel):
     grade: str | None
 
 
+class EducationSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    class_level: int
+    register_number: str
+    exam_year: int
+    board: str
+
+
+class EducationRecordOut(EducationSummary):
+    marks: list[MarkOut] = []
+
+
 class DocumentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     kind: str
+    kind_label: str
+    classification: dict[str, Any] | None = None
+    masked_aadhaar: str | None = None
     original_filename: str
     mime_type: str
     size_bytes: int
@@ -119,6 +184,7 @@ class FindingOut(BaseModel):
     detail: str | None
     severity: str
     confidence: float | None
+    meta: dict[str, Any] | None = None
 
 
 class RunOut(BaseModel):
@@ -139,14 +205,18 @@ class ApplicationOut(BaseModel):
 
     id: int
     reference: str
-    program: str
     applicant_name: str
-    register_number: str
-    exam_year: int
-    board: str
+    date_of_birth: date
+    father_name: str
+    mother_name: str
+    phone: str
+    address: str
+    is_orphan: bool
+    is_first_graduate: bool
     status: str
     created_at: datetime
     submitted_at: datetime | None
+    classes: list[EducationSummary] = []
 
 
 class ReviewOut(BaseModel):
@@ -166,7 +236,7 @@ class ReviewOut(BaseModel):
 
 
 class ApplicationDetail(ApplicationOut):
-    marks: list[MarkOut] = []
+    education: list[EducationRecordOut] = []
     documents: list[DocumentOut] = []
     latest_run: RunOut | None = None
     extracted_marks: list[ExtractOut] = []

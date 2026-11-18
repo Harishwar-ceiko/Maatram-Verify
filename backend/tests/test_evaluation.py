@@ -120,13 +120,19 @@ def test_evaluation_scores_extraction_and_mismatch_detection(tmp_path, monkeypat
         subjects=[_subject("Mathematics", 70), _subject("English", 60)],
     )
 
-    def fake_extract(data: bytes, mime: str) -> Extraction:
+    def fake_extract(data: bytes, mime: str, kind: str | None = None) -> Extraction:
         return exact_a if len(data) == 10 else exact_b
 
     monkeypatch.setattr(evaluation, "extract_document", fake_extract)
     summary, markdown = evaluation.evaluate_dataset(dataset)
 
     assert summary["cases"] == 2
+    assert summary["mark_sheets"] == {
+        "total": 2,
+        "class_10": 0,
+        "class_11": 0,
+        "class_12": 2,
+    }
     assert summary["field_accuracy"] == 1.0
     assert summary["subjects"]["found_rate"] == 1.0
     assert summary["subjects"]["mark_accuracy"] == 1.0
@@ -164,7 +170,7 @@ def test_evaluation_reports_ocr_errors_without_aborting(tmp_path, monkeypatch):
         "photos": [],
     }
 
-    def explode(data: bytes, mime: str):
+    def explode(data: bytes, mime: str, kind: str | None = None):
         raise RuntimeError("tesseract unavailable")
 
     monkeypatch.setattr(evaluation, "extract_document", explode)
@@ -174,3 +180,116 @@ def test_evaluation_reports_ocr_errors_without_aborting(tmp_path, monkeypatch):
     assert summary["errors"][0]["case"] == "broken"
     assert "tesseract unavailable" in summary["errors"][0]["error"]
     assert summary["status"] == "completed"
+
+
+def test_evaluation_scores_supporting_documents_and_classification(tmp_path, monkeypatch):
+    monkeypatch.setattr(evaluation, "SYNTHETIC_DIR", tmp_path)
+    (tmp_path / "documents").mkdir()
+    (tmp_path / "documents" / "aadhaar-ok.png").write_bytes(b"aadhaar-ok")
+    (tmp_path / "documents" / "aadhaar-bad.png").write_bytes(b"aadhaar-bad")
+    (tmp_path / "documents" / "income.png").write_bytes(b"income")
+    dataset = {
+        "dataset": "test-v1",
+        "cases": [],
+        "documents": [
+            {
+                "id": "aadhaar-ok",
+                "kind": "aadhaar",
+                "file": "documents/aadhaar-ok.png",
+                "mime": "image/png",
+                "variant": "clean",
+                "expected": {
+                    "name": "Asha Rao",
+                    "birth_detail": "2008-04-18",
+                    "aadhaar_last4": "1234",
+                    "checksum_valid": True,
+                },
+                "note": "valid",
+            },
+            {
+                "id": "aadhaar-bad",
+                "kind": "aadhaar",
+                "file": "documents/aadhaar-bad.png",
+                "mime": "image/png",
+                "variant": "clean",
+                "expected": {
+                    "name": "Bala Kumar",
+                    "birth_detail": "2007",
+                    "aadhaar_last4": "5678",
+                    "checksum_valid": False,
+                },
+                "note": "invalid checksum",
+            },
+            {
+                "id": "income",
+                "kind": "income_certificate",
+                "file": "documents/income.png",
+                "mime": "image/png",
+                "variant": "clean",
+                "expected": {
+                    "name": "Asha Rao",
+                    "certificate_number": "INC/2026/0042",
+                    "issue_date": "2026-04-12",
+                    "annual_income": 180000,
+                },
+                "note": "income",
+            },
+        ],
+        "photos": [],
+    }
+
+    extractions = {
+        b"aadhaar-ok": Extraction(
+            name=Field(value="Asha Rao", confidence=95.0),
+            raw_text="Aadhaar\nUnique Identification Authority of India\nName: Asha Rao",
+            kind="aadhaar",
+            attributes={
+                "name": "Asha Rao",
+                "aadhaar_number": "XXXX XXXX 1234",
+                "birth_detail": "2008-04-18",
+                "checksum_valid": True,
+            },
+        ),
+        b"aadhaar-bad": Extraction(
+            name=Field(value="Bala Kumar", confidence=95.0),
+            raw_text="Aadhaar\nUnique Identification Authority of India\nName: Bala Kumar",
+            kind="aadhaar",
+            attributes={
+                "name": "Bala Kumar",
+                "aadhaar_number": "XXXX XXXX 5678",
+                "birth_detail": "2007",
+                "checksum_valid": False,
+            },
+        ),
+        b"income": Extraction(
+            name=Field(value="Asha Rao", confidence=95.0),
+            raw_text="Income Certificate\nAnnual Income: INR 1,80,000\nRevenue Department",
+            kind="income_certificate",
+            attributes={
+                "name": "Asha Rao",
+                "certificate_number": "INC/2026/0042",
+                "issue_date": "2026-04-12",
+                "annual_income": 180000,
+            },
+        ),
+    }
+
+    def fake_document(data: bytes, mime: str, kind: str | None = None) -> Extraction:
+        return extractions[data]
+
+    monkeypatch.setattr(evaluation, "extract_document", fake_document)
+    summary, markdown = evaluation.evaluate_dataset(dataset)
+
+    documents = summary["documents"]
+    assert documents["fixtures"] == 3
+    assert documents["fields_total"] == 12
+    assert documents["fields_correct"] == 12
+    assert documents["field_accuracy"] == 1.0
+    assert documents["checksum"] == {"tested": 2, "correct": 2, "accuracy": 1.0}
+    assert documents["classification_accuracy"] == 1.0
+    assert summary["classification"]["accuracy"] == 1.0
+    assert summary["classification"]["total"] == 3
+    assert summary["targets"]["document_field_accuracy"]["met"] is True
+    assert "## Supporting documents" in markdown
+    assert "Aadhaar checksum: **2/2**" in markdown
+    assert "## Document type confusion" in markdown

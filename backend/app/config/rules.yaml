@@ -35,12 +35,31 @@ ocr:
   low_confidence: 62           # a field below this goes to manual review
 
 subjects:
-  # Canonical subjects a complete mark sheet must carry.
+  # Canonical subjects a complete Class 12 mark sheet must carry. Per-class
+  # lists below drive the application form (Phase 1) and the class-specific
+  # completeness checks that follow.
   required:
     - Mathematics
     - English
     - Physics
     - Chemistry
+  classes:
+    "10":
+      - Mathematics
+      - Science
+      - Social Science
+      - English
+      - Tamil
+    "11":
+      - Mathematics
+      - English
+      - Physics
+      - Chemistry
+    "12":
+      - Mathematics
+      - English
+      - Physics
+      - Chemistry
   # Alias map for normalisation. Matching is case/punctuation-insensitive and
   # also consults rapidfuzz for anything the map misses.
   aliases:
@@ -59,10 +78,184 @@ subjects:
   fuzzy_threshold: 82          # rapidfuzz WRatio, 0-100
   mark_tolerance: 0            # exact integer marks unless a rule overrides
 
+documents:
+  # Document types are configuration, not code. Every upload is classified
+  # from its printed text with keyword scoring; the applicant can always
+  # override the detected type before the checks run.
+  classifier:
+    min_score: 3
+    ambiguous_margin: 2
+    auto_dpi: 160
+    low_text_words: 8
+    keywords:
+      marksheet_10:
+        title:
+          - secondary school leaving certificate
+          - class x
+          - class 10
+          - 10th standard
+          - matriculation
+          - sslc
+        body: [science, social science, mathematics, tamil, marks, register]
+      marksheet_11:
+        title:
+          - higher secondary first year
+          - first year
+          - class xi
+          - class 11
+          - 11th standard
+          - "+1"
+        body: [physics, chemistry, mathematics, english, marks, register]
+      marksheet_12:
+        title:
+          - higher secondary certificate
+          - higher secondary examination
+          - second year
+          - class xii
+          - class 12
+          - 12th standard
+          - "+2"
+        body: [physics, chemistry, mathematics, english, marks, register]
+      aadhaar:
+        title:
+          - aadhaar
+          - aadhar
+          - unique identification authority
+          - uidai
+          - government of india
+        body: [year of birth, date of birth, gender, address, vid, enrolment]
+      income_certificate:
+        title:
+          - income certificate
+          - annual income certificate
+          - income and asset certificate
+        body: [annual income, income, issued, revenue, taluk, family]
+      community_certificate:
+        title:
+          - community certificate
+          - caste certificate
+        body: [community, category, backward class, scheduled caste, scheduled tribe, revenue]
+      first_graduate_certificate:
+        title:
+          - first graduate certificate
+          - first graduate
+        body: [graduate, father, mother, issued, education]
+  kinds:
+    marksheet_10:
+      label: Class 10 mark sheet
+      short: Class 10
+      extractor: marksheet
+      class_level: 10
+      slot: multiple
+      required_fields: [name, register_number, exam_year, subjects]
+      generic_required: false
+    marksheet_11:
+      label: Class 11 mark sheet
+      short: Class 11
+      extractor: marksheet
+      class_level: 11
+      slot: multiple
+      required_fields: [name, register_number, exam_year, subjects]
+      generic_required: false
+    marksheet_12:
+      label: Class 12 mark sheet
+      short: Class 12
+      extractor: marksheet
+      class_level: 12
+      slot: multiple
+      required_fields: [name, register_number, exam_year, subjects]
+      generic_required: false
+    aadhaar:
+      label: Aadhaar
+      short: Aadhaar
+      extractor: aadhaar
+      slot: single
+      required_fields: [aadhaar_number, name, birth_detail]
+    income_certificate:
+      label: Income certificate
+      short: Income
+      extractor: income
+      slot: single
+      required_fields: [name, certificate_number, annual_income, issue_date]
+    community_certificate:
+      label: Community certificate
+      short: Community
+      extractor: community
+      slot: single
+      required_fields: [name, certificate_number, community, issue_date]
+    first_graduate_certificate:
+      label: First graduate certificate
+      short: First graduate
+      extractor: first_graduate
+      slot: single
+      required_fields: [name, certificate_number, first_graduate, issue_date]
+    photo:
+      label: Profile photo
+      short: Photo
+      extractor: photo
+      slot: single
+      required_fields: []
+  field_labels:
+    name: Name
+    register_number: Register number
+    exam_year: Examination year
+    subjects: Subject rows
+    aadhaar_number: Aadhaar number
+    birth_detail: Date or year of birth
+    date_of_birth: Date of birth
+    year_of_birth: Year of birth
+    certificate_number: Certificate number
+    annual_income: Annual income
+    issue_date: Issue date
+    community: Community
+    father_name: Father's name
+    first_graduate: First graduate status
+
+aadhaar:
+  number_length: 12
+  mask_prefix: "XXXX XXXX"
+  qr:
+    # A missing QR is a warning, not a rejection: photocopies and older cards
+    # often lose it. A decoded QR that disagrees with the printed number is a
+    # hard failure.
+    required: false
+    mismatch_severity: critical
+
+income:
+  max_annual_income: 250000
+  validity_months: 12
+  future_tolerance_days: 0
+
+community:
+  known_values:
+    - BC
+    - MBC
+    - SC
+    - ST
+    - DNC
+    - OBC
+    - GENERAL
+    - BACKWARD CLASS
+    - MOST BACKWARD CLASS
+    - SCHEDULED CASTE
+    - SCHEDULED TRIBE
+  future_tolerance_days: 30
+
+first_graduate:
+  future_tolerance_days: 30
+
 validation:
   name_fuzzy_threshold: 86
+  father_name_fuzzy_threshold: 88
+  address_fuzzy_threshold: 72
   register_number_min_confidence: 55
   duplicate_phash_distance: 8  # =< this counts as a near duplicate
+  class_years:
+    max_gap_years: 3            # a longer break between classes is not a normal progression
+  subject_group:
+    enabled: true
+    min_overlap: 0.5            # Jaccard overlap of Class 11 and 12 subjects
+    ignored_subjects: [English, Tamil]
   overall:
     flag_mark_mismatch: true
     flag_photo_fail: true
@@ -99,9 +292,11 @@ security:
   max_failed_logins_before_audit: 3
 
 evaluation:
-  dataset: synthetic-v1
+  dataset: synthetic-v2
   cases: 24
+  class_11_cases: 6
   seed: 2601
   min_field_accuracy: 0.90   # target shown on the accuracy page
   min_mismatch_recall: 0.85
   min_photo_accuracy: 0.90
+  min_document_field_accuracy: 0.90

@@ -1,6 +1,6 @@
 // Dev-only: captures the final demo state. Uses pre-minted tokens so no
 // auth.login noise reaches the audit log, and makes no review decisions or
-// validation runs. Expects the seeded queue (4 open items).
+// validation runs. Expects the seeded queue (9 open items, 10 applications).
 // Usage: node scripts/shoot-demo.mjs
 import puppeteer from "puppeteer-core";
 import { mkdir } from "node:fs/promises";
@@ -16,12 +16,8 @@ if (!TOKENS.admin || !TOKENS.student) {
 
 const auth = { headers: { Authorization: `Bearer ${TOKENS.admin}` } };
 const queue = await fetch(`${API}/admin/reviews`, auth).then((response) => response.json());
-if (queue.counts.open !== 4 || queue.counts.active !== 4) {
+if (queue.counts.open !== 9 || queue.counts.active !== 9) {
   throw new Error(`queue is ${queue.counts.open} open / ${queue.counts.active} active`);
-}
-const references = new Set(queue.items.map((item) => item.reference));
-for (const reference of ["MH26-AZ3GX", "MH26-TDVAY", "MH26-V7THG", "MH26-Y4SFD"]) {
-  if (!references.has(reference)) throw new Error(`queue is missing ${reference}`);
 }
 for (const item of queue.items) {
   if (!item.reasons.length) throw new Error(`${item.reference} has no reasons`);
@@ -33,11 +29,18 @@ const expected = {
   3: { status: "needs_review", overall: "fail" },
   4: { status: "needs_review", overall: "fail" },
   5: { status: "needs_review", overall: "review" },
+  6: { status: "needs_review", overall: "fail" },
+  7: { status: "needs_review", overall: "fail" },
+  8: { status: "needs_review", overall: "fail" },
+  9: { status: "needs_review", overall: "fail" },
+  10: { status: "needs_review", overall: "fail" },
 };
+const references = {};
 for (const [id, state] of Object.entries(expected)) {
   const application = await fetch(`${API}/applications/${id}`, auth).then((response) =>
     response.json(),
   );
+  references[id] = application.reference;
   if (application.status !== state.status) {
     throw new Error(`app ${id} status is ${application.status}, expected ${state.status}`);
   }
@@ -80,7 +83,7 @@ function requireText(text, needles, label) {
 const queueText = await shoot("admin", "/admin/reviews", "reviews-queue-1440");
 requireText(
   queueText,
-  ["Review queue", "MH26-AZ3GX", "MH26-TDVAY", "MH26-V7THG", "MH26-Y4SFD", "3 mismatched"],
+  ["Review queue", references[2], references[3], references[4], references[5], "3 mismatched"],
   "queue",
 );
 
@@ -134,10 +137,10 @@ requireText(
   auditText,
   [
     "validation.completed",
-    "validation.started",
     "validation_run #1",
-    "validation_run #5",
+    "validation_run #9",
     "photo_failures: 1",
+    "identity_mismatches: 1",
   ],
   "audit log",
 );
@@ -151,7 +154,7 @@ await shoot("admin", "/admin/applications", "admin-applications-390", 390, 900, 
 const studentOverview = await shoot("student", "/overview", "student-overview-1440");
 requireText(
   studentOverview,
-  ["MH26-5PCPR", "MH26-AZ3GX", "MH26-Y4SFD"],
+  ["Your applications", references[10], references[8], references[6], references[5]],
   "student overview",
 );
 await shoot("student", "/overview", "student-overview-390", 390, 900, true);
@@ -193,4 +196,4 @@ requireText(
 );
 
 await browser.close();
-console.log("demo state captured; queue remains 4 open, app 1 still submitted");
+console.log("demo state captured; queue remains 9 open, app 1 still submitted");

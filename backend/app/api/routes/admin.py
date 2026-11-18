@@ -7,16 +7,24 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
-from app.db.session import get_db
+from app.core.config import rules
+from app.db.session import get_db, get_session_factory
 from app.models.accuracy import AccuracyRun
 from app.models.application import Application
+from app.models.document import Document, ExtractedMark
 from app.models.enums import ApplicationStatus, ReviewStatus, Role, RunStatus
 from app.models.review import AuditLog, ReviewItem
 from app.models.user import User
 from app.models.validation import Finding, ValidationRun
-from app.schemas.application import ApplicationList, ApplicationOut, ReviewDecision
+from app.schemas.application import (
+    ApplicationList,
+    ApplicationOut,
+    MarkCorrection,
+    ReviewDecision,
+)
 from app.services.audit import write_audit
 from app.services.evaluation import latest_run_summary, run_evaluation
+from app.services.validation import run_validation
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -81,7 +89,7 @@ def overview(db: Session = Depends(get_db), _: User = Depends(require_admin)) ->
                 "application_id": application.id,
                 "reference": application.reference,
                 "applicant_name": application.applicant_name,
-                "program": application.program,
+                "class_12_year": application.class_12.exam_year if application.class_12 else None,
                 "status": run.status,
                 "overall": run.overall,
                 "verdict": summary.get("verdict"),
@@ -183,7 +191,7 @@ def review_queue(
                 "application_id": application.id,
                 "reference": application.reference,
                 "applicant_name": application.applicant_name,
-                "program": application.program,
+                "class_12_year": application.class_12.exam_year if application.class_12 else None,
                 "application_status": application.status,
                 "status": item.status,
                 "priority": item.priority,
@@ -299,6 +307,122 @@ def reject_review(
     )
 
 
+@router.patch("/documents/{document_id}/marks/{mark_id}")
+def correct_extracted_mark(
+    document_id: int,
+    mark_id: int,
+    payload: MarkCorrection,
+    request: Request,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+    session_factory=Depends(get_session_factory),
+) -> dict:
+    """Store an admin correction and re-check the application.
+
+    The corrected value is kept separately from the OCR read so the original
+    evidence stays visible. The next run applies it when comparing marks and
+    when showing the extracted rows, so a corrected subject can clear exactly
+    the finding it was meant to fix.
+    """
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    mark = db.get(ExtractedMark, mark_id)
+    if mark is None or mark.document_id != document.id:
+        raise HTTPException(
+            status_code=404, detail="Extracted mark not found on this document."
+        )
+    application = db.get(Application, document.application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found.")
+    if application.status in (
+        ApplicationStatus.approved.value,
+        ApplicationStatus.rejected.value,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This application has already been decided and cannot be corrected.",
+        )
+    active = db.scalar(
+        select(ValidationRun.id).where(
+            ValidationRun.application_id == application.id,
+            ValidationRun.status.in_(
+                [RunStatus.pending.value, RunStatus.running.value]
+            ),
+        )
+    )
+    if active:
+        raise HTTPException(
+            status_code=409, detail="Checks are already running on this application."
+        )
+
+    subject = " ".join(payload.subject.split()) if payload.subject else None
+    before = {
+        "subject": mark.corrected_subject or mark.subject_raw,
+        "marks_obtained": (
+            mark.corrected_marks
+            if mark.corrected_marks is not None
+            else mark.marks_obtained
+        ),
+    }
+    if subject:
+        mark.corrected_subject = subject
+    mark.corrected_marks = payload.marks_obtained
+    mark.corrected_by = admin.id
+    mark.corrected_at = datetime.now(timezone.utc)
+    after = {
+        "subject": mark.corrected_subject or mark.subject_raw,
+        "marks_obtained": mark.corrected_marks,
+    }
+
+    run = ValidationRun(application_id=application.id, status=RunStatus.pending.value)
+    application.status = ApplicationStatus.processing.value
+    db.add(run)
+    db.flush()
+    write_audit(
+        db,
+        action="mark.corrected",
+        entity_type="extracted_mark",
+        entity_id=mark.id,
+        application_id=application.id,
+        actor_id=admin.id,
+        actor_email=admin.email,
+        detail={
+            "reference": application.reference,
+            "document_id": document.id,
+            "document_label": document.kind_label,
+            "filename": document.original_filename,
+            "run_id": run.id,
+            "before": before,
+            "after": after,
+        },
+        request=request,
+    )
+    db.commit()
+    db.refresh(run)
+    db.refresh(mark)
+
+    background.add_task(run_validation, run.id, session_factory)
+    return {
+        "mark": {
+            "id": mark.id,
+            "document_id": mark.document_id,
+            "subject_raw": mark.subject_raw,
+            "subject_norm": mark.subject_norm,
+            "marks_obtained": mark.marks_obtained,
+            "max_marks": mark.max_marks,
+            "grade": mark.grade,
+            "confidence": mark.confidence,
+            "page": mark.page,
+            "corrected_subject": mark.corrected_subject,
+            "corrected_marks": mark.corrected_marks,
+        },
+        "run": {"id": run.id, "status": run.status},
+    }
+
+
 @router.get("/students", response_model=list[dict])
 def students(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> list[dict]:
     rows = db.scalars(select(User).where(User.role == Role.student.value).order_by(User.created_at.desc())).all()
@@ -365,6 +489,7 @@ def _run_headline(run: AccuracyRun) -> dict:
         "status": summary.get("status", "completed"),
         "created_at": run.created_at.isoformat(),
         "field_accuracy": summary.get("field_accuracy"),
+        "document_accuracy": (summary.get("documents") or {}).get("field_accuracy"),
         "mismatch_recall": (summary.get("mismatch") or {}).get("recall"),
         "photo_accuracy": (summary.get("photos") or {}).get("rule_accuracy"),
     }
@@ -395,7 +520,7 @@ def start_accuracy_run(
         raise HTTPException(status_code=409, detail="An accuracy run is already in progress.")
 
     run = AccuracyRun(
-        dataset="synthetic-v1",
+        dataset=rules()["evaluation"]["dataset"],
         total_cases=0,
         summary={
             "status": "running",

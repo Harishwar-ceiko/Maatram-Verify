@@ -53,9 +53,9 @@ export function ReviewPanel({ application }: { application: ApplicationDetail })
           <p className="label">Why the checker routed it</p>
           {review.reasons.length > 0 ? (
             <ul className="mt-3 grid gap-2.5">
-              {review.reasons.map((reason) => (
+              {review.reasons.map((reason, index) => (
                 <li
-                  key={reason}
+                  key={`${index}-${reason}`}
                   className="flex items-start gap-2.5 text-[12.5px] leading-relaxed text-ink-soft"
                 >
                   <span

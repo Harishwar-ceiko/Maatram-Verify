@@ -21,6 +21,7 @@ def test_accuracy_endpoint_is_admin_only(client, student_headers, admin_headers,
         summary={
             "status": "completed",
             "field_accuracy": 1.0,
+            "documents": {"field_accuracy": 0.96},
             "mismatch": {"recall": 1.0},
             "photos": {"rule_accuracy": 1.0},
         },
@@ -36,6 +37,7 @@ def test_accuracy_endpoint_is_admin_only(client, student_headers, admin_headers,
     assert body["latest"]["total_cases"] == 24
     assert body["latest"]["summary"]["field_accuracy"] == 1.0
     assert body["history"][0]["photo_accuracy"] == 1.0
+    assert body["history"][0]["document_accuracy"] == 0.96
     assert body["running"] is False
 
 
@@ -61,3 +63,4 @@ def test_starting_an_accuracy_run_rejects_a_second_request(
     status = client.get("/api/admin/accuracy", headers=admin_headers)
     assert status.json()["running"] is True
     assert status.json()["latest"]["status"] == "running"
+    assert status.json()["latest"]["dataset"] == "synthetic-v2"

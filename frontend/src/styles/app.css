@@ -469,6 +469,10 @@ svg {
   color: var(--color-warn);
 }
 
+.status-not_available {
+  color: var(--color-muted);
+}
+
 /* Tables ----------------------------------------------------------------- */
 
 .data-table {

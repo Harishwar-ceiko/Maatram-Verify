@@ -17,6 +17,10 @@ def public_config(_: User = Depends(get_current_user)) -> dict:
         "app": config["app"],
         "subjects": {
             "required": config["subjects"]["required"],
+            "by_class": {
+                str(level): subjects
+                for level, subjects in config["subjects"]["classes"].items()
+            },
             "known": list(config["subjects"]["aliases"].keys()),
             "fuzzy_threshold": config["subjects"]["fuzzy_threshold"],
         },
@@ -43,5 +47,19 @@ def public_config(_: User = Depends(get_current_user)) -> dict:
         "ocr": {
             "engine": config["ocr"]["engine"],
             "low_confidence": config["ocr"]["low_confidence"],
+        },
+        "documents": {
+            "kinds": config["documents"]["kinds"],
+            "field_labels": config["documents"]["field_labels"],
+            "classifier": {
+                "min_score": config["documents"]["classifier"]["min_score"],
+                "ambiguous_margin": config["documents"]["classifier"][
+                    "ambiguous_margin"
+                ],
+            },
+            "aadhaar": config["aadhaar"],
+            "income": config["income"],
+            "community": config["community"],
+            "first_graduate": config["first_graduate"],
         },
     }

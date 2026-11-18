@@ -54,6 +54,14 @@ def checksum(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def safe_filename(name: str) -> str:
+    """Sanitise a name and mask anything that looks like an Aadhaar number."""
+
+    from app.validators.aadhaar import redact_filename
+
+    return redact_filename(sanitize_filename(name))
+
+
 def dhash(image: Image.Image, size: int = 8) -> str:
     gray = ImageOps.exif_transpose(image).convert("L").resize((size + 1, size), Image.Resampling.LANCZOS)
     pixels = gray.tobytes()

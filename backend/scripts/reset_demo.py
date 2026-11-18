@@ -8,8 +8,9 @@ The three-minute walkthrough changes two records:
 
 This script returns both to the seeded state, removes the resulting audit
 entries and clears the sign-in/download noise created by the demo browser
-sessions. The other seeded applications, their runs and the queue are left
-untouched, so the references stay stable between rehearsals.
+sessions. The other seeded applications, their runs, supporting documents and
+the nine-item queue are left untouched, so the references stay stable between
+rehearsals.
 
 Usage:
     python scripts/reset_demo.py
@@ -22,12 +23,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import delete, select  # noqa: E402
+from sqlalchemy import delete, func, select  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.application import Application  # noqa: E402
 from app.models.enums import ApplicationStatus, ReviewStatus  # noqa: E402
-from app.models.review import AuditLog  # noqa: E402
+from app.models.review import AuditLog, ReviewItem  # noqa: E402
 
 
 def main() -> int:
@@ -98,7 +99,17 @@ def main() -> int:
         f"{app1_audit} app-1 entries, {review_audit} review entries,",
         f"{downloads} downloads, {logins} sign-ins",
     )
-    print("Demo state ready. The review queue should show four open items.")
+    open_items = (
+        db.scalar(
+            select(func.count())
+            .select_from(ReviewItem)
+            .where(ReviewItem.status == ReviewStatus.open.value)
+        )
+        or 0
+    )
+    print(
+        f"Demo state ready. The review queue should show {open_items} open item(s)."
+    )
     db.close()
     return 0
 

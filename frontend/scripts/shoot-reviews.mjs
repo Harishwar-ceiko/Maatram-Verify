@@ -119,7 +119,7 @@ if (after.status !== "approved") throw new Error(`application status is ${after.
 if (after.review.status !== "approved") throw new Error(`review status is ${after.review.status}`);
 if (after.review.decision_comment !== NOTE) throw new Error("stored note differs");
 const queueAfter = await fetch(`${API}/admin/reviews`, auth).then((response) => response.json());
-if (queueAfter.counts.active !== 3) throw new Error(`active count is ${queueAfter.counts.active}`);
+if (queueAfter.counts.active !== 8) throw new Error(`active count is ${queueAfter.counts.active}`);
 if (queueAfter.counts.approved !== 1) throw new Error(`approved count is ${queueAfter.counts.approved}`);
 
 const audit = await open("/admin/audit");

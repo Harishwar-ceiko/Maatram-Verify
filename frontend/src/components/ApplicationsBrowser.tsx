@@ -46,7 +46,7 @@ export function ApplicationsBrowser({ admin }: { admin?: boolean }) {
             />
             <input
               className="input pl-9"
-              placeholder={admin ? "Reference, name, register number" : "Reference or programme"}
+              placeholder="Reference, name or register number"
               aria-label="Search applications"
               value={query}
               onChange={(event) => setQuery(event.target.value)}

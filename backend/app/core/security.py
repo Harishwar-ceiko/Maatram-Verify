@@ -62,3 +62,11 @@ def encrypt_bytes(data: bytes) -> bytes:
 
 def decrypt_bytes(data: bytes) -> bytes:
     return _fernet().decrypt(data)
+
+
+def encrypt_text(value: str) -> str:
+    return _fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_text(token: str) -> str:
+    return _fernet().decrypt(token.encode("utf-8")).decode("utf-8")

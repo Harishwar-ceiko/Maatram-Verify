@@ -7,18 +7,9 @@ from sqlalchemy import select
 from app.models.application import Application
 from app.models.review import AuditLog, ReviewItem
 from app.models.validation import ValidationRun
+from tests.payloads import application_payload
 
-PAYLOAD = {
-    "program": "B.Sc. Computer Science",
-    "applicant_name": "Test Student",
-    "register_number": "reg2026a014",
-    "exam_year": 2026,
-    "board": "State Board",
-    "marks": [
-        {"subject": "Mathematics", "marks_obtained": 92, "max_marks": 100},
-        {"subject": "English", "marks_obtained": 88, "max_marks": 100},
-    ],
-}
+PAYLOAD = application_payload()
 
 
 def _file(client, headers) -> dict:

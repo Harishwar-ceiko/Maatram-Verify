@@ -11,15 +11,9 @@ from app.core.security import decrypt_bytes  # noqa: E402
 from app.services import storage  # noqa: E402
 from app.models import Document  # noqa: E402
 from tests.conftest import TestingSession  # noqa: E402
+from tests.payloads import application_payload  # noqa: E402
 
-PAYLOAD = {
-    "program": "B.Sc. Computer Science",
-    "applicant_name": "Test Student",
-    "register_number": "REG2026A014",
-    "exam_year": 2026,
-    "board": "State Board",
-    "marks": [{"subject": "Mathematics", "marks_obtained": 92, "max_marks": 100}],
-}
+PAYLOAD = application_payload()
 
 
 def make_png(size: tuple[int, int] = (360, 480), colour=(220, 210, 190)) -> bytes:

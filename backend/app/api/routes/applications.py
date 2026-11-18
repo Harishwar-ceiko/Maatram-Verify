@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_application_for_user, get_current_user
 from app.db.session import get_db, get_session_factory
-from app.models.application import Application, EnteredMark
+from app.models.application import Application, EducationRecord, EnteredMark
 from app.models.enums import ApplicationStatus, DocumentKind, Role, RunStatus
 from app.models.user import User
 from app.models.validation import ValidationRun
@@ -20,8 +20,10 @@ from app.schemas.application import (
     ApplicationList,
     ApplicationOut,
     DocumentOut,
+    EducationRecordOut,
+    EducationRecordIn,
+    EducationSummary,
     ExtractOut,
-    MarkOut,
     ReviewOut,
     RunOut,
 )
@@ -52,15 +54,21 @@ def _to_detail(application: Application, include_review: bool = False) -> Applic
     return ApplicationDetail(
         id=application.id,
         reference=application.reference,
-        program=application.program,
         applicant_name=application.applicant_name,
-        register_number=application.register_number,
-        exam_year=application.exam_year,
-        board=application.board,
+        date_of_birth=application.date_of_birth,
+        father_name=application.father_name,
+        mother_name=application.mother_name,
+        phone=application.phone,
+        address=application.address,
+        is_orphan=application.is_orphan,
+        is_first_graduate=application.is_first_graduate,
         status=application.status,
         created_at=application.created_at,
         submitted_at=application.submitted_at,
-        marks=[MarkOut.model_validate(mark) for mark in application.entered_marks],
+        classes=[EducationSummary.model_validate(record) for record in application.classes],
+        education=[
+            EducationRecordOut.model_validate(record) for record in application.classes
+        ],
         documents=[DocumentOut.model_validate(doc) for doc in application.documents],
         latest_run=RunOut.model_validate(application.latest_run) if application.latest_run else None,
         extracted_marks=[
@@ -82,7 +90,7 @@ def list_applications(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> ApplicationList:
     statement = select(Application).options(
-        selectinload(Application.entered_marks),
+        selectinload(Application.education_records),
         selectinload(Application.documents),
         selectinload(Application.runs),
     )
@@ -96,8 +104,9 @@ def list_applications(
             or_(
                 Application.reference.ilike(like),
                 Application.applicant_name.ilike(like),
-                Application.register_number.ilike(like),
-                Application.program.ilike(like),
+                Application.education_records.any(
+                    EducationRecord.register_number.ilike(like)
+                ),
             )
         )
     total = db.scalar(select(func.count()).select_from(statement.order_by(None).subquery())) or 0
@@ -105,6 +114,24 @@ def list_applications(
         statement.order_by(Application.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     ).unique().all()
     return ApplicationList(items=[ApplicationOut.model_validate(row) for row in rows], total=total)
+
+
+def _record_model(payload: EducationRecordIn, class_level: int) -> EducationRecord:
+    return EducationRecord(
+        class_level=class_level,
+        register_number=payload.register_number,
+        exam_year=payload.exam_year,
+        board=payload.board,
+        marks=[
+            EnteredMark(
+                subject=mark.subject,
+                marks_obtained=mark.marks_obtained,
+                max_marks=mark.max_marks,
+                grade=mark.grade,
+            )
+            for mark in payload.marks
+        ],
+    )
 
 
 @router.post("", response_model=ApplicationDetail, status_code=201)
@@ -125,22 +152,21 @@ def create_application(
     application = Application(
         reference=reference,
         student_id=user.id,
-        program=payload.program,
         applicant_name=payload.applicant_name,
-        register_number=payload.register_number,
-        exam_year=payload.exam_year,
-        board=payload.board.strip(),
+        date_of_birth=payload.date_of_birth,
+        father_name=payload.father_name,
+        mother_name=payload.mother_name,
+        phone=payload.phone,
+        address=payload.address,
+        is_orphan=payload.is_orphan,
+        is_first_graduate=payload.is_first_graduate,
         status=ApplicationStatus.submitted.value,
         submitted_at=datetime.now(timezone.utc),
     )
-    application.entered_marks = [
-        EnteredMark(
-            subject=mark.subject,
-            marks_obtained=mark.marks_obtained,
-            max_marks=mark.max_marks,
-            grade=mark.grade,
-        )
-        for mark in payload.marks
+    application.education_records = [
+        _record_model(payload.class_10, 10),
+        *([_record_model(payload.class_11, 11)] if payload.class_11 is not None else []),
+        _record_model(payload.class_12, 12),
     ]
     db.add(application)
     db.flush()
@@ -152,7 +178,11 @@ def create_application(
         application_id=application.id,
         actor_id=user.id,
         actor_email=user.email,
-        detail={"reference": application.reference, "subjects": len(payload.marks)},
+        detail={
+            "reference": application.reference,
+            "classes": [record.class_level for record in application.classes],
+            "subjects": sum(len(record.marks) for record in application.classes),
+        },
         request=request,
     )
     db.commit()
@@ -233,10 +263,10 @@ def validate_application(
         )
 
     kinds = {document.kind for document in application.documents}
-    if DocumentKind.marksheet.value not in kinds:
+    if not kinds & {DocumentKind.marksheet_12.value, DocumentKind.marksheet.value}:
         raise HTTPException(
             status_code=422,
-            detail="Attach a mark sheet before running the checks.",
+            detail="Attach a Class 12 mark sheet before running the checks.",
         )
     if DocumentKind.photo.value not in kinds:
         raise HTTPException(

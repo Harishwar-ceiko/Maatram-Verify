@@ -11,20 +11,9 @@ from app.ocr.types import Extraction, Field, OcrPage, SubjectRow
 from app.services import validation as validation_service
 from app.validators.photo import PhotoAnalysis, PhotoCheckResult
 from tests.conftest import TestingSession
+from tests.payloads import application_payload
 
-PAYLOAD = {
-    "program": "B.Sc. Computer Science",
-    "applicant_name": "Test Student",
-    "register_number": "REG2026A014",
-    "exam_year": 2026,
-    "board": "State Board",
-    "marks": [
-        {"subject": "Mathematics", "marks_obtained": 85, "max_marks": 100},
-        {"subject": "English", "marks_obtained": 92, "max_marks": 100},
-        {"subject": "Physics", "marks_obtained": 81, "max_marks": 100},
-        {"subject": "Chemistry", "marks_obtained": 79, "max_marks": 100},
-    ],
-}
+PAYLOAD = application_payload()
 
 
 def make_png(
@@ -187,7 +176,7 @@ def test_validation_records_mismatch_missing_subject_and_review(
     monkeypatch.setattr(
         validation_service,
         "extract_document",
-        lambda data, mime: fake_extraction(math=88, include_physics=False),
+        lambda data, mime, kind=None: fake_extraction(math=88, include_physics=False),
     )
 
     response = client.post(f"/api/applications/{application_id}/validate", headers=student_headers)
@@ -246,7 +235,7 @@ def test_passing_run_verifies_application(client, student_headers, monkeypatch):
     monkeypatch.setattr(
         validation_service,
         "extract_document",
-        lambda data, mime: fake_extraction(math=85),
+        lambda data, mime, kind=None: fake_extraction(math=85),
     )
 
     response = client.post(f"/api/applications/{application_id}/validate", headers=student_headers)
@@ -258,7 +247,19 @@ def test_passing_run_verifies_application(client, student_headers, monkeypatch):
     assert detail["latest_run"]["summary"]["verdict"] == (
         "All checks passed. 4 subjects match the mark sheet and identity details are consistent."
     )
-    assert len(detail["latest_run"]["findings"]) == 9
+    assert len(detail["latest_run"]["findings"]) == 12
+    consistency = [
+        finding
+        for finding in detail["latest_run"]["findings"]
+        if finding["category"] == "consistency"
+    ]
+    assert {finding["field"] for finding in consistency} == {
+        "Class 10 to Class 11 years",
+        "Class 11 to Class 12 years",
+        "Class 11 and 12 subject group",
+    }
+    assert {finding["result"] for finding in consistency} == {"pass"}
+    assert detail["latest_run"]["summary"]["identity_matrix"]["mismatched"] == 0
     photo = [
         finding for finding in detail["latest_run"]["findings"] if finding["category"] == "photo"
     ]
@@ -279,7 +280,7 @@ def test_photo_failures_reach_the_report(client, student_headers, monkeypatch):
     monkeypatch.setattr(
         validation_service,
         "extract_document",
-        lambda data, mime: fake_extraction(math=85),
+        lambda data, mime, kind=None: fake_extraction(math=85),
     )
     monkeypatch.setattr(
         validation_service,
@@ -310,6 +311,59 @@ def test_photo_failures_reach_the_report(client, student_headers, monkeypatch):
     assert brightness["required_value"] == "55–215"
     face = next(finding for finding in photo if finding["field"] == "Face")
     assert face["result"] == "fail"
+
+
+def test_consistency_flags_reach_the_review_reasons_and_queue(
+    client, student_headers, admin_headers, monkeypatch
+):
+    payload = application_payload()
+    payload["class_11"]["exam_year"] = 2027
+    payload["class_11"]["marks"] = [
+        {"subject": "History", "marks_obtained": 88, "max_marks": 100},
+        {"subject": "Geography", "marks_obtained": 86, "max_marks": 100},
+        {"subject": "Economics", "marks_obtained": 84, "max_marks": 100},
+    ]
+    application_id = create_application(client, student_headers, payload)
+    attach_documents(client, student_headers, application_id)
+    monkeypatch.setattr(
+        validation_service,
+        "extract_document",
+        lambda data, mime, kind=None: fake_extraction(math=85),
+    )
+
+    response = client.post(
+        f"/api/applications/{application_id}/validate", headers=student_headers
+    )
+    assert response.status_code == 202, response.text
+    detail = client.get(
+        f"/api/applications/{application_id}", headers=admin_headers
+    ).json()
+    assert detail["status"] == "needs_review"
+    consistency = [
+        finding
+        for finding in detail["latest_run"]["findings"]
+        if finding["category"] == "consistency"
+    ]
+    assert any(
+        finding["field"] == "Class 11 to Class 12 years"
+        and finding["result"] == "mismatch"
+        for finding in consistency
+    )
+    assert any(
+        finding["field"] == "Class 11 and 12 subject group"
+        and finding["result"] == "pending"
+        for finding in consistency
+    )
+    reasons = detail["review"]["reasons"]
+    assert any("Class 11 to Class 12 years" in reason for reason in reasons)
+    assert any("Class 11 and 12 subject group" in reason for reason in reasons)
+
+    queue = client.get("/api/admin/reviews", headers=admin_headers).json()
+    item = next(
+        entry for entry in queue["items"] if entry["application_id"] == application_id
+    )
+    assert any("Class 11 to Class 12 years" in reason for reason in item["reasons"])
+    assert any("Class 11 and 12 subject group" in reason for reason in item["reasons"])
 
 
 def test_second_run_is_rejected_while_one_is_active(client, student_headers):

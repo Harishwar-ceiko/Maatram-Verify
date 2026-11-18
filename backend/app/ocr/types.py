@@ -79,6 +79,14 @@ class Extraction:
     engine: str = ""
     duration_ms: int = 0
     warnings: list[str] = field(default_factory=list)
+    kind: str | None = None
+    classification: dict[str, Any] | None = None
+    # Non-mark-sheet values in display-safe form (Aadhaar is already masked).
+    attributes: dict[str, Any] = field(default_factory=dict)
+    # Values that must never be persisted or logged. The Aadhaar extractor puts
+    # the full number and checksum state here for the write path only.
+    sensitive: dict[str, Any] = field(default_factory=dict)
+    qr_payloads: list[str] = field(default_factory=list)
 
 
 class OcrEngine(Protocol):
