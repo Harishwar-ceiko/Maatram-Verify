@@ -288,11 +288,11 @@ All business rules are in one configuration file, so they can be adjusted withou
 - Income limit and certificate validity window
 - Confidence threshold below which a field goes to manual review
 
-Environment variables (see `.env.example`): `SECRET_KEY`, `FERNET_KEY`, `DATABASE_URL`, `STORAGE_DIR`, `CORS_ORIGINS`, `TESSERACT_CMD`.
+Environment variables (see `.env.example`): `SECRET_KEY`, `FERNET_KEY`, `DATABASE_URL`, `STORAGE_DIR`, `CORS_ORIGINS`, `TESSERACT_CMD`, plus `APP_ENV` and `SEED_ON_START`. In production, `SECRET_KEY` and `FERNET_KEY` are required.
 
 ## Deployment
 
-The frontend can be hosted on a static platform such as Vercel. The backend needs Tesseract, persistent storage and background tasks, so it should run in a container (for example on Render, Railway or Fly.io). See `DEPLOY.md` if present for step-by-step instructions.
+The frontend can be hosted on a static platform such as Vercel. The backend needs Tesseract, persistent storage and background tasks, so it should run in a container (for example on Render, Railway or Fly.io). See [`DEPLOY.md`](DEPLOY.md) for exact Render (Docker) and Vercel steps, environment variables and a persistent-disk setup.
 
 ## Scope and roadmap
 

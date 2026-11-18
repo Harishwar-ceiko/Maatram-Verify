@@ -1,0 +1,38 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets — never bake a real .env into the image
+.env
+.env.*
+!.env.example
+
+# Local data, uploads, generated corpora and reports
+data/
+uploads/
+storage/
+reports/
+synthetic/
+*.db
+*.db-wal
+*.db-shm
+
+# Tests and local sample files are not part of the runtime image
+tests/
+samples/
+tessdata/
+
+# VCS, editors and Docker metadata
+.git/
+.gitignore
+.vscode/
+.idea/
+Dockerfile
+.dockerignore

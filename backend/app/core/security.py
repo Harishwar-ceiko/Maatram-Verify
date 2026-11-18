@@ -50,9 +50,9 @@ def decode_token(token: str) -> dict[str, Any]:
 
 
 def _fernet() -> Fernet:
-    key = get_settings().file_encryption_key
+    key = get_settings().fernet_key
     if not key:
-        raise RuntimeError("FILE_ENCRYPTION_KEY is not configured")
+        raise RuntimeError("FERNET_KEY is not configured")
     return Fernet(key.encode("utf-8"))
 
 

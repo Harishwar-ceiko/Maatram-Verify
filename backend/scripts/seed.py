@@ -706,21 +706,7 @@ def _run_once(db, application: Application) -> bool:
     return True
 
 
-def main() -> None:
-    reset = "--reset" in sys.argv[1:]
-    init_db()
-    if reset:
-        db = SessionLocal()
-        try:
-            Base.metadata.drop_all(bind=db.get_bind())
-        finally:
-            db.close()
-        uploads = get_settings().resolved_upload_dir()
-        if uploads.exists():
-            shutil.rmtree(uploads)
-        init_db()
-        print("Reset: dropped all tables and stored uploads.")
-
+def _seed() -> None:
     db = SessionLocal()
     try:
         if not db.scalar(select(User).where(User.email == ADMIN["email"])):
@@ -873,6 +859,51 @@ def main() -> None:
         print(f"  review queue populated: {open_reviews} open item(s)")
     finally:
         db.close()
+
+
+def is_database_empty() -> bool:
+    """True when a fresh database has neither users nor applications.
+
+    Startup seeding checks both so a deploy that already holds real work is
+    never touched.
+    """
+
+    db = SessionLocal()
+    try:
+        has_users = db.scalar(select(User.id).limit(1)) is not None
+        has_applications = db.scalar(select(Application.id).limit(1)) is not None
+        return not has_users and not has_applications
+    finally:
+        db.close()
+
+
+def seed_if_empty() -> bool:
+    """Seed only a completely empty database. Returns True when it ran."""
+
+    init_db()
+    if not is_database_empty():
+        return False
+    _seed()
+    return True
+
+
+def main(reset: bool | None = None) -> None:
+    if reset is None:
+        reset = "--reset" in sys.argv[1:]
+    init_db()
+    if reset:
+        db = SessionLocal()
+        try:
+            Base.metadata.drop_all(bind=db.get_bind())
+        finally:
+            db.close()
+        uploads = get_settings().resolved_storage_dir()
+        if uploads.exists():
+            shutil.rmtree(uploads)
+        init_db()
+        print("Reset: dropped all tables and stored uploads.")
+
+    _seed()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -25,12 +26,22 @@ class Settings(BaseSettings):
     secret_key: str | None = None
     access_token_expire_minutes: int = 120
     database_url: str | None = None
-    file_encryption_key: str | None = None
+    fernet_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("FERNET_KEY", "FILE_ENCRYPTION_KEY"),
+    )
     max_upload_mb: int = 15
-    upload_dir: str | None = None
+    storage_dir: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("STORAGE_DIR", "UPLOAD_DIR"),
+    )
     ocr_engine: str = "tesseract"
     tesseract_cmd: str | None = None
-    frontend_origin: str = "http://localhost:5173"
+    cors_origins: str = Field(
+        default="http://localhost:5173",
+        validation_alias=AliasChoices("CORS_ORIGINS", "FRONTEND_ORIGIN"),
+    )
+    seed_on_start: bool = False
     login_rate_limit: int = 8
     login_rate_window_seconds: int = 300
 
@@ -52,8 +63,18 @@ class Settings(BaseSettings):
             return self.database_url
         return f"sqlite:///{(DATA_DIR / 'admissions.db').as_posix()}"
 
-    def resolved_upload_dir(self) -> Path:
-        path = Path(self.upload_dir) if self.upload_dir else DATA_DIR / "uploads"
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Comma-separated CORS_ORIGINS parsed into the exact origins to allow."""
+
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.cors_origins.split(",")
+            if origin.strip()
+        ]
+
+    def resolved_storage_dir(self) -> Path:
+        path = Path(self.storage_dir) if self.storage_dir else DATA_DIR / "uploads"
         if not path.is_absolute():
             path = (BACKEND_DIR / path).resolve()
         return path
@@ -79,18 +100,34 @@ def _persisted_secret(filename: str, factory) -> str:
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
-    if settings.app_env != "test":
+    if settings.app_env.lower() == "production":
+        missing = [
+            env_name
+            for env_name, value in (
+                ("SECRET_KEY", settings.secret_key),
+                ("FERNET_KEY", settings.fernet_key),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "Missing required production environment variable(s): "
+                + ", ".join(missing)
+            )
+    elif settings.app_env != "test":
         if not settings.secret_key:
-            settings.secret_key = _persisted_secret("dev_secret", lambda: secrets.token_urlsafe(48))
-        if not settings.file_encryption_key:
+            settings.secret_key = _persisted_secret(
+                "dev_secret", lambda: secrets.token_urlsafe(48)
+            )
+        if not settings.fernet_key:
             from cryptography.fernet import Fernet
 
-            settings.file_encryption_key = _persisted_secret(
+            settings.fernet_key = _persisted_secret(
                 "dev_fernet.key", lambda: Fernet.generate_key().decode()
             )
     else:
         settings.secret_key = settings.secret_key or "test-secret-key"
-        settings.file_encryption_key = settings.file_encryption_key or base64.urlsafe_b64encode(
+        settings.fernet_key = settings.fernet_key or base64.urlsafe_b64encode(
             b"0" * 32
         ).decode()
     return settings

@@ -116,7 +116,7 @@ def hamming_hex(left: str, right: str) -> int:
 
 
 def storage_root() -> Path:
-    root = get_settings().resolved_upload_dir()
+    root = get_settings().resolved_storage_dir()
     root.mkdir(parents=True, exist_ok=True)
     return root
 

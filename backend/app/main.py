@@ -17,8 +17,13 @@ logger = logging.getLogger("maatram")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings = get_settings()
-    settings.resolved_upload_dir().mkdir(parents=True, exist_ok=True)
+    settings.resolved_storage_dir().mkdir(parents=True, exist_ok=True)
     init_db()
+    if settings.seed_on_start and settings.app_env != "test":
+        from scripts.seed import seed_if_empty
+
+        if seed_if_empty():
+            logger.info("Seeded the demo data into an empty database")
     logger.info("Maatram Verify %s ready", __version__)
     yield
 
@@ -34,7 +39,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.frontend_origin],
+        allow_origins=settings.cors_origin_list,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -51,6 +56,7 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+@app.get("/health", tags=["meta"])
 @app.get("/api/health", tags=["meta"])
 def health() -> dict:
     from app.ocr.engine import engine_name

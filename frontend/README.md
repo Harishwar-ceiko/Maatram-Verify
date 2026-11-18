@@ -12,7 +12,8 @@ npm run dev
 ```
 
 The app expects the API at `http://127.0.0.1:8000`. Vite proxies `/api` so the
-browser can use same-origin paths.
+browser can use same-origin paths. Set `VITE_API_URL` (backend origin, no `/api`)
+to call a deployed API instead; leave it blank locally to keep using the proxy.
 
 ```powershell
 npm run build     # tsc -b + production build

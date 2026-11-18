@@ -1,5 +1,14 @@
 const TOKEN_KEY = "maatram.token";
 
+/**
+ * Backend origin from VITE_API_URL, without a trailing slash and without
+ * `/api` (each request below appends it). When the variable is unset — the
+ * normal local development case — requests stay relative so the Vite proxy
+ * forwards `/api` to http://127.0.0.1:8000.
+ */
+const API_ORIGIN = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+const API_BASE = `${API_ORIGIN}/api`;
+
 export type Role = "student" | "admin";
 
 export interface User {
@@ -528,7 +537,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   let response: Response;
   try {
-    response = await fetch(`/api${path}`, { ...init, headers });
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch {
     throw new ApiError(0, "Cannot reach the server. Check that the API is running.");
   }
@@ -589,7 +598,7 @@ export function uploadDocument(
 ): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open("POST", `/api/applications/${applicationId}/documents`);
+    request.open("POST", `${API_BASE}/applications/${applicationId}/documents`);
     const token = getToken();
     if (token) request.setRequestHeader("Authorization", `Bearer ${token}`);
 
@@ -636,7 +645,7 @@ export async function documentBlob(documentId: number): Promise<Blob> {
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`/api/documents/${documentId}/file`, { headers });
+  const response = await fetch(`${API_BASE}/documents/${documentId}/file`, { headers });
   if (!response.ok) {
     throw new ApiError(response.status, "Could not open the stored file.");
   }
@@ -647,7 +656,7 @@ export async function reportBlob(applicationId: number | string): Promise<Blob> 
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`/api/applications/${applicationId}/report.pdf`, { headers });
+  const response = await fetch(`${API_BASE}/applications/${applicationId}/report.pdf`, { headers });
   if (!response.ok) {
     if (response.status === 401) {
       setToken(null);
