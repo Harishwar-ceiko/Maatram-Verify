@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Private environment variables
+.env
+.env.*
+!.env.example
+# Local demo account maintenance
+backend/scripts/update_demo_profiles.py

@@ -30,3 +30,17 @@ frontend/shots/
 Thumbs.db
 .idea/
 .vscode/
+# Additional deployment protection
+.env.*
+!.env.example
+backend/.env.*
+!backend/.env.example
+
+# Uploaded student documents and local storage
+backend/uploads/
+backend/storage/
+backend/media/
+backend/scripts/update_demo_profiles.py
+# Local customized demo seed data
+backend/scripts/seed.py
+backend/scripts/update_demo_profiles.py

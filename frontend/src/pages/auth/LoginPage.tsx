@@ -7,10 +7,20 @@ import { Alert, Button, Field } from "../../components/ui";
 import { useAuth, landingFor } from "../../lib/auth";
 import { ApiError } from "../../lib/api";
 
-const DEMOS = [
-  { label: "Applicant demo", email: "ananya@student.example", password: "Student@2026" },
-  { label: "Reviewer demo", email: "admin@maatram.example", password: "Admin@2026" },
-];
+const DEMOS = import.meta.env.DEV
+  ? [
+      {
+        label: "Harini — Applicant",
+        email: import.meta.env.VITE_DEMO_STUDENT_EMAIL || "",
+        password: import.meta.env.VITE_DEMO_STUDENT_PASSWORD || "",
+      },
+      {
+        label: "Maatram Reviewer",
+        email: import.meta.env.VITE_DEMO_REVIEWER_EMAIL || "",
+        password: import.meta.env.VITE_DEMO_REVIEWER_PASSWORD || "",
+      },
+    ].filter((demo) => demo.email && demo.password)
+  : [];
 
 export function LoginPage() {
   const { signIn } = useAuth();
