@@ -15,7 +15,9 @@ RUN apt-get update \
         tesseract-ocr-eng \
         libgl1 \
         libglib2.0-0 \
-        fonts-dejavu-core \
+                fonts-dejavu-core \
+    && mkdir -p /usr/bin/tessdata \
+    && ln -sf /usr/share/tesseract-ocr/5/tessdata/eng.traineddata /usr/bin/tessdata/eng.traineddata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
