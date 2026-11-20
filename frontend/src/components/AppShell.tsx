@@ -5,6 +5,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   ClipboardCheck,
   FileText,
+  Users,
   Gauge,
   LayoutDashboard,
   LogOut,
@@ -34,6 +35,7 @@ const studentNav: NavItem[] = [
 
 const adminNav: NavItem[] = [
   { to: "/admin", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/admin/students", label: "Students", icon: Users, end: true },
   { to: "/admin/applications", label: "Applications", icon: FileText, end: true },
   { to: "/admin/reviews", label: "Review Queue", icon: ClipboardCheck, end: true },
   { to: "/admin/accuracy", label: "Accuracy", icon: Gauge, end: true },

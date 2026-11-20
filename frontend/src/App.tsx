@@ -10,6 +10,7 @@ import { NewApplicationPage } from "./pages/student/NewApplicationPage";
 import { ApplicationDetailPage } from "./pages/student/ApplicationDetailPage";
 import { AdminOverviewPage } from "./pages/admin/AdminOverviewPage";
 import { AdminApplicationsPage } from "./pages/admin/AdminApplicationsPage";
+import { StudentsPage } from "./pages/admin/StudentsPage";
 import { ReviewQueuePage } from "./pages/admin/ReviewQueuePage";
 import { AccuracyPage } from "./pages/admin/AccuracyPage";
 import { AuditPage } from "./pages/admin/AuditPage";
@@ -117,6 +118,14 @@ export default function App() {
         element={
           <ProtectedRoute role="admin">
             <ApplicationDetailPage adminView />
+          </ProtectedRoute>
+        }
+      />
+       <Route
+        path="/admin/students"
+        element={
+          <ProtectedRoute role="admin">
+            <StudentsPage />
           </ProtectedRoute>
         }
       />

@@ -36,10 +36,12 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         raise HTTPException(status_code=409, detail="An account with this email already exists.")
 
     user = User(
-        email=email,
-        password_hash=hash_password(payload.password),
-        full_name=payload.full_name,
-        role=Role.student.value,
+         email=email,
+         password_hash=hash_password(payload.password),
+         full_name=payload.full_name,
+         role=Role.student.value,
+         volunteer_activities=payload.volunteer_activities or None,
+         achievements=payload.achievements or None,
     )
     db.add(user)
     db.flush()

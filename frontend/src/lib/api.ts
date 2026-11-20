@@ -18,7 +18,15 @@ export interface User {
   role: Role;
   created_at: string;
 }
-
+export interface StudentRecord {
+  id: number;
+  full_name: string;
+  email: string;
+  created_at: string;
+  applications: number;
+  volunteer_activities: string | null;
+  achievements: string | null;
+}
 export interface Mark {
   id: number;
   subject: string;
@@ -680,11 +688,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  register: (full_name: string, email: string, password: string) =>
-    request<{ access_token: string; token_type: string; user: User }>("/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ full_name, email, password }),
+  register: (
+  full_name: string,
+  email: string,
+  password: string,
+  volunteer_activities?: string,
+  achievements?: string,
+) =>
+  request<{ access_token: string; token_type: string; user: User }>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      full_name,
+      email,
+      password,
+      volunteer_activities,
+      achievements,
     }),
+  }),
   me: () => request<User>("/auth/me"),
   config: () => request<MetaConfig>("/meta/config"),
   applications: (params?: { q?: string; status?: string; page?: number; page_size?: number }) => {
@@ -728,6 +748,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   adminOverview: () => request<AdminOverview>("/admin/overview"),
+  students: () => request<StudentRecord[]>("/admin/students"),
   reviews: (status = "active", page = 1) =>
     request<ReviewQueue>(`/admin/reviews?status=${status}&page=${page}`),
   decideReview: (reviewId: number, decision: "approve" | "reject", comment: string) =>

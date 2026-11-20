@@ -10,6 +10,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)
     register_number: str | None = Field(default=None, max_length=64)
+    volunteer_activities: str | None = Field(default=None, max_length=3000)
+    achievements: str | None = Field(default=None, max_length=3000)
 
     @field_validator("full_name")
     @classmethod
@@ -42,6 +44,9 @@ class UserOut(BaseModel):
     full_name: str
     role: str
     created_at: datetime
+    volunteer_activities: str | None = None
+    achievements: str | None = None
+
 
 
 class TokenResponse(BaseModel):

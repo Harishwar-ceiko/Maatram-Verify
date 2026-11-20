@@ -13,6 +13,8 @@ export function RegisterPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [volunteerActivities, setVolunteerActivities] = useState("");
+  const [achievements, setAchievements] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -25,7 +27,13 @@ export function RegisterPage() {
     }
     setBusy(true);
     try {
-      const user = await signUp(fullName.trim(), email.trim(), password);
+      const user = await signUp(
+        fullName.trim(),
+        email.trim(),
+        password,
+        volunteerActivities.trim(),
+        achievements.trim(),
+      );
       navigate(landingFor(user.role), { replace: true });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.detail : "Could not create the account. Try again.");
@@ -88,7 +96,37 @@ export function RegisterPage() {
             required
           />
         </Field>
+                <Field
+          label="Volunteer Activities (Optional)"
+          htmlFor="volunteer_activities"
+          hint="Mention NSS, volunteering, NGO work, social service, etc."
+        >
+          <textarea
+            id="volunteer_activities"
+            name="volunteer_activities"
+            className="input min-h-[90px] resize-y"
+            rows={3}
+            placeholder="Describe your volunteer activities..."
+            value={volunteerActivities}
+            onChange={(event) => setVolunteerActivities(event.target.value)}
+          />
+        </Field>
 
+        <Field
+          label="Achievements (Optional)"
+          htmlFor="achievements"
+          hint="Mention awards, competitions, certificates, hackathons, sports, etc."
+        >
+          <textarea
+            id="achievements"
+            name="achievements"
+            className="input min-h-[90px] resize-y"
+            rows={3}
+            placeholder="Describe your achievements..."
+            value={achievements}
+            onChange={(event) => setAchievements(event.target.value)}
+          />
+        </Field>
         <Button type="submit" block busy={busy} className="mt-1 h-11">
           Create account
           {busy ? null : <ArrowRight size={15} aria-hidden="true" />}

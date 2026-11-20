@@ -438,6 +438,8 @@ def students(db: Session = Depends(get_db), _: User = Depends(require_admin)) ->
             "email": user.email,
             "created_at": user.created_at.isoformat(),
             "applications": counts.get(user.id, 0),
+            "volunteer_activities": user.volunteer_activities,
+            "achievements": user.achievements,
         }
         for user in rows
     ]
